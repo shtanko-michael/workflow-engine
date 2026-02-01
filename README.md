@@ -24,10 +24,8 @@ For PostgreSQL persistence:
 | Project | Description |
 |--------|-------------|
 | **WorkflowEngine.Core** | Core engine: graph, state, checkpoints, execution |
-| **WorkflowEngine.Persistence** | Persistence abstractions |
 | **WorkflowEngine.Persistence.Memory** | In-memory checkpoint store |
 | **WorkflowEngine.Persistence.Postgres** | PostgreSQL checkpoint store |
-| **WorkflowEngine.AI** | Optional AI client abstraction (stub implementation) |
 | **WorkflowEngine.Bundle** | Single project referencing all libraries (convenience/NuGet) |
 | **WorkflowEngine.Examples** | Example workflows (e.g. Onboarding) |
 | **WorkflowEngine.Tests** | Core tests |
