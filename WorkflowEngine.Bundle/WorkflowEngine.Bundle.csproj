@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>WorkflowEngine.Bundle</RootNamespace>
+    <AssemblyName>WorkflowEngine.Bundle</AssemblyName>
+    <Description>Single package that references all WorkflowEngine libraries (Core, AI, Persistence, Persistence.Memory, Persistence.Postgres). Use this project or NuGet package to get the full engine in one place.</Description>
+    <PackageId>WorkflowEngine.Bundle</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>WorkflowEngine</Authors>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+    <IncludeBuildOutput>true</IncludeBuildOutput>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\WorkflowEngine.Core\WorkflowEngine.Core.csproj" />
+    <ProjectReference Include="..\WorkflowEngine.AI\WorkflowEngine.AI.csproj" />
+    <ProjectReference Include="..\WorkflowEngine.Persistence\WorkflowEngine.Persistence.csproj" />
+    <ProjectReference Include="..\WorkflowEngine.Persistence.Memory\WorkflowEngine.Persistence.Memory.csproj" />
+    <ProjectReference Include="..\WorkflowEngine.Persistence.Postgres\WorkflowEngine.Persistence.Postgres.csproj" />
+  </ItemGroup>
+
+</Project>
