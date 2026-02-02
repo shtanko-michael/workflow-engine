@@ -10,6 +10,8 @@ type MessageRowProps = {
   onCancelEdit: () => void
   onSwitchVersion: (versionId: string) => void
   loading?: boolean
+  /** True when this row is the streaming placeholder (no messages yet, streaming first response). */
+  isStreamingPlaceholder?: boolean
 }
 
 const roleLabel: Record<MessageWithVersions['role'], string> = {
@@ -37,12 +39,13 @@ export function MessageRow({
   onCancelEdit,
   onSwitchVersion,
   loading = false,
+  isStreamingPlaceholder = false,
 }: MessageRowProps) {
   const isUser = message.role === 'user'
   const avatar = avatarStyles[message.role]
   const rowClass = isUser ? 'bg-neutral-900' : 'bg-neutral-950'
-  const hasVersions = message.totalVersions > 1
-  const canEdit = isUser && !loading
+  const hasVersions = !isStreamingPlaceholder && message.totalVersions > 1
+  const canEdit = isUser && !loading && !isStreamingPlaceholder
 
   return (
     <div
@@ -99,9 +102,18 @@ export function MessageRow({
             </div>
           ) : (
             <>
-              <div className="whitespace-pre-wrap text-sm leading-relaxed text-neutral-100">
-                {message.content}
-              </div>
+              {isStreamingPlaceholder && !message.content ? (
+                <div className="flex items-center gap-2 text-sm text-neutral-300">
+                  <span className="h-2 w-2 animate-bounce rounded-full bg-neutral-400" />
+                  <span className="h-2 w-2 animate-bounce rounded-full bg-neutral-400 [animation-delay:150ms]" />
+                  <span className="h-2 w-2 animate-bounce rounded-full bg-neutral-400 [animation-delay:300ms]" />
+                  <span className="ml-2 text-neutral-500">Thinking...</span>
+                </div>
+              ) : (
+                <div className="whitespace-pre-wrap text-sm leading-relaxed text-neutral-100">
+                  {message.content}
+                </div>
+              )}
               {hasVersions && (
                 <VersionSwitcher
                   message={message}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { apiBase, fetchJson } from './api/client'
 import { useChatConnection } from './hooks/useChatConnection'
 import { Sidebar } from './components/layout/Sidebar'
@@ -20,8 +20,9 @@ function App() {
   const [newDialogTitle, setNewDialogTitle] = useState('')
   const [dialogToDelete, setDialogToDelete] = useState<Dialog | null>(null)
   const [streamingContent, setStreamingContent] = useState('')
+  const skipPendingResetRef = useRef(false)
 
-  useChatConnection({
+  const { joinDialogNow } = useChatConnection({
     activeDialogId,
     setDialogs,
     setMessages,
@@ -51,6 +52,10 @@ function App() {
   }, [activeDialogId])
 
   useEffect(() => {
+    if (skipPendingResetRef.current) {
+      skipPendingResetRef.current = false
+      return
+    }
     setPendingResponse(false)
     setStreamingContent('')
   }, [activeDialogId])
@@ -73,12 +78,14 @@ function App() {
           workflowId,
         }),
       })
+      await joinDialogNow(dialog.id)
       setDialogs((prev) => [dialog, ...prev])
+      skipPendingResetRef.current = true
       setActiveDialogId(dialog.id)
-      const list = await fetchJson<MessageWithVersions[]>(
-        `${apiBase}/api/v1/dialogs/${dialog.id}/messages`,
-      )
-      setMessages(list)
+      setMessages([])
+      setPendingResponse(true)
+      setStreamingContent('')
+      // Workflow runs in background; messages will arrive via SignalR messagesUpdated / assistantChunk
     } catch (error) {
       console.error(error)
     } finally {

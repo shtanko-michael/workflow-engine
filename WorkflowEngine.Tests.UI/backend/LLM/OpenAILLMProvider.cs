@@ -1,9 +1,10 @@
+#pragma warning disable OPENAI001 // Response APIs are evaluation-only
 using System.ClientModel;
 using System.Text.Json;
-using Microsoft.Extensions.Logging;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.Options;
 using OpenAI;
-using OpenAI.Chat;
+using OpenAI.Responses;
 
 namespace WorkflowEngine.Tests.UI.Backend.LLM;
 
@@ -12,8 +13,8 @@ namespace WorkflowEngine.Tests.UI.Backend.LLM;
 /// </summary>
 public sealed class OpenAILLMProvider : ILLMProviderClient
 {
-    private readonly OpenAIOptions _opts;
-    private readonly ChatClient _client;
+    private readonly string _apiKey;
+    private readonly string? _baseUrl;
     private readonly string _defaultModel;
     private readonly ILogger<OpenAILLMProvider>? _logger;
 
@@ -21,30 +22,25 @@ public sealed class OpenAILLMProvider : ILLMProviderClient
         IOptions<OpenAIOptions> options,
         ILogger<OpenAILLMProvider>? logger = null)
     {
-        _opts = options?.Value ?? throw new ArgumentNullException(nameof(options));
-        _defaultModel = _opts.DefaultModel ?? "gpt-4o-mini";
-        _logger = logger;
-        _client = CreateClient(_defaultModel);
-    }
-
-    private ChatClient CreateClient(string model)
-    {
-        var apiKey = _opts.ApiKey ?? "";
-        if (!string.IsNullOrWhiteSpace(_opts.BaseUrl) && Uri.TryCreate(_opts.BaseUrl, UriKind.Absolute, out var baseUri))
-        {
-            var credential = new ApiKeyCredential(apiKey);
-            var options = new OpenAIClientOptions { Endpoint = baseUri };
-            return new ChatClient(model, credential, options);
-        }
-        return new ChatClient(model, apiKey);
-    }
-
-    private ChatClient GetClient(string model)
-    {
-        var apiKey = _opts.ApiKey ?? "";
-        if (string.IsNullOrWhiteSpace(apiKey))
+        var opts = options?.Value ?? throw new ArgumentNullException(nameof(options));
+        _apiKey = opts.ApiKey ?? "";
+        if (string.IsNullOrWhiteSpace(_apiKey))
             throw new InvalidOperationException("LLM:OpenAI:ApiKey is required in appsettings for AI chat.");
-        return model == _defaultModel ? _client : CreateClient(model);
+        _baseUrl = opts.BaseUrl;
+        _defaultModel = opts.DefaultModel ?? "gpt-4o-mini";
+        _logger = logger;
+    }
+
+    /// <summary>
+    /// Creates OpenAIResponseClient for the given model (by analogy with OpenAIProviderClient).
+    /// </summary>
+    private OpenAIResponseClient CreateResponseClient(string model)
+    {
+        var credential = new ApiKeyCredential(_apiKey);
+        OpenAIClientOptions? clientOptions = string.IsNullOrEmpty(_baseUrl) || !Uri.TryCreate(_baseUrl, UriKind.Absolute, out var baseUri)
+            ? null
+            : new OpenAIClientOptions { Endpoint = baseUri };
+        return new OpenAIResponseClient(model, credential, clientOptions);
     }
 
     public async Task<LLMResponse> ExecuteAsync(
@@ -52,10 +48,21 @@ public sealed class OpenAILLMProvider : ILLMProviderClient
         string? model = null,
         CancellationToken cancellationToken = default)
     {
-        var messages = ToChatMessages(request.Messages);
         var m = model ?? _defaultModel;
-        var client = GetClient(m);
-        return await CompleteAsync(client, messages, m, cancellationToken).ConfigureAwait(false);
+        var responseClient = CreateResponseClient(m);
+
+        var options = new ResponseCreationOptions
+        {
+            Instructions = BuildInstructions(request),
+        };
+
+        var items = BuildResponseItems(request);
+
+        var response = await responseClient.CreateResponseAsync(items, options, cancellationToken).ConfigureAwait(false);
+        var value = response.Value;
+        var content = value.GetOutputText();
+
+        return new LLMResponse { Content = content, Model = m };
     }
 
     public async Task<LLMResponse> ExecuteStreamAsync(
@@ -64,22 +71,27 @@ public sealed class OpenAILLMProvider : ILLMProviderClient
         string? model = null,
         CancellationToken cancellationToken = default)
     {
-        var messages = ToChatMessages(request.Messages);
         var m = model ?? _defaultModel;
-        var client = GetClient(m);
-        var fullContent = new System.Text.StringBuilder();
-        await foreach (var update in client.CompleteChatStreamingAsync(messages, cancellationToken: cancellationToken).ConfigureAwait(false))
+        var responseClient = CreateResponseClient(m);
+
+        var options = new ResponseCreationOptions
         {
-            foreach (var contentUpdate in update.ContentUpdate)
+            Instructions = BuildInstructions(request),
+        };
+
+        var items = BuildResponseItems(request);
+
+        var fullContent = new System.Text.StringBuilder();
+        await foreach (StreamingResponseUpdate update in responseClient.CreateResponseStreamingAsync(items, options, cancellationToken).ConfigureAwait(false))
+        {
+            if (update is StreamingResponseOutputTextDeltaUpdate textDelta && !string.IsNullOrEmpty(textDelta.Delta))
             {
-                if (contentUpdate.Kind == ChatMessageContentPartKind.Text && !string.IsNullOrEmpty(contentUpdate.Text))
-                {
-                    fullContent.Append(contentUpdate.Text);
-                    if (onChunk != null)
-                        await onChunk(contentUpdate.Text).ConfigureAwait(false);
-                }
+                fullContent.Append(textDelta.Delta);
+                if (onChunk != null)
+                    await onChunk(textDelta.Delta).ConfigureAwait(false);
             }
         }
+
         return new LLMResponse { Content = fullContent.ToString(), Model = m };
     }
 
@@ -89,21 +101,26 @@ public sealed class OpenAILLMProvider : ILLMProviderClient
         CancellationToken cancellationToken = default)
         where TOutput : class
     {
-        var messages = ToChatMessages(request.Messages);
         var m = model ?? _defaultModel;
-        var client = GetClient(m);
+        var responseClient = CreateResponseClient(m);
 
         var schema = JsonSchemaHelper.GetJsonSchemaForType<TOutput>();
-        var options = new ChatCompletionOptions
+        var schemaJson = System.Text.Encoding.UTF8.GetString(schema);
+        var baseInstructions = BuildInstructions(request);
+        var structuredInstructions = string.IsNullOrWhiteSpace(baseInstructions)
+            ? $"Return the response in the following JSON schema: {schemaJson}"
+            : $"{baseInstructions}\n\nReturn the response in the following JSON schema: {schemaJson}";
+
+        var options = new ResponseCreationOptions
         {
-            ResponseFormat = ChatResponseFormat.CreateJsonSchemaFormat(
-                jsonSchemaFormatName: "response",
-                jsonSchema: BinaryData.FromBytes(schema),
-                jsonSchemaIsStrict: true)
+            Instructions = structuredInstructions,
         };
 
-        var completion = await client.CompleteChatAsync(messages, options, cancellationToken).ConfigureAwait(false);
-        var content = completion.Value.Content.Count > 0 ? completion.Value.Content[0].Text : "";
+        var items = BuildResponseItems(request);
+
+        var response = await responseClient.CreateResponseAsync(items, options, cancellationToken).ConfigureAwait(false);
+        var content = response.Value.GetOutputText();
+
         TOutput? output = null;
         if (!string.IsNullOrWhiteSpace(content))
         {
@@ -125,31 +142,45 @@ public sealed class OpenAILLMProvider : ILLMProviderClient
         };
     }
 
-    private static async Task<LLMResponse> CompleteAsync(
-        ChatClient client,
-        List<ChatMessage> messages,
-        string model,
-        CancellationToken cancellationToken)
+    /// <summary>
+    /// Builds instructions for Response API from system messages (by analogy with BuildInstructions(LLMRequest) in OpenAIProviderClient).
+    /// </summary>
+    private static string BuildInstructions(LLMRequest request)
     {
-        var completion = await client.CompleteChatAsync(messages, cancellationToken: cancellationToken).ConfigureAwait(false);
-        var content = completion.Value.Content.Count > 0 ? completion.Value.Content[0].Text : "";
-        return new LLMResponse { Content = content, Model = model };
+        var parts = new List<string>();
+        if (request?.Messages == null)
+            return string.Join("\n", parts);
+        foreach (var message in request.Messages)
+        {
+            if (message == null) continue;
+            if (string.Equals(message.Role, "system", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(message.Content))
+                parts.Add(message.Content);
+        }
+        return string.Join("\n", parts.Where(p => !string.IsNullOrWhiteSpace(p)));
     }
 
-    private static List<ChatMessage> ToChatMessages(List<LLMMessage> messages)
+    /// <summary>
+    /// Converts LLMRequest messages to ResponseItem list for Response API.
+    /// By analogy with BuildResponseItemsAsync in OpenAIProviderClient: each message with content becomes a user message item.
+    /// </summary>
+    private static List<ResponseItem> BuildResponseItems(LLMRequest request)
     {
-        var list = new List<ChatMessage>();
-        foreach (var m in messages)
+        var items = new List<ResponseItem>();
+        if (request?.Messages != null)
         {
-            var role = m.Role?.ToLowerInvariant() ?? "user";
-            list.Add(role switch
+            foreach (var message in request.Messages)
             {
-                "system" => new SystemChatMessage(m.Content ?? ""),
-                "assistant" => new AssistantChatMessage(m.Content ?? ""),
-                _ => new UserChatMessage(m.Content ?? "")
-            });
+                if (message == null) continue;
+                var parts = new List<ResponseContentPart>();
+                if (!string.IsNullOrWhiteSpace(message.Content))
+                    parts.Add(ResponseContentPart.CreateInputTextPart(message.Content));
+                if (parts.Count > 0)
+                    items.Add(ResponseItem.CreateUserMessageItem(parts));
+            }
         }
-        return list;
+        if (items.Count == 0)
+            items.Add(ResponseItem.CreateUserMessageItem([ResponseContentPart.CreateInputTextPart(string.Empty)]));
+        return items;
     }
 }
 
@@ -165,19 +196,73 @@ public sealed class OpenAIOptions
 }
 
 /// <summary>
-/// Builds minimal JSON schema for a type (for structured output).
+/// Builds JSON schema for a type (for structured output with OpenAI).
 /// </summary>
 internal static class JsonSchemaHelper
 {
     public static byte[] GetJsonSchemaForType<T>() where T : class
     {
-        var schema = new Dictionary<string, object?>
+        var type = typeof(T);
+        var properties = new Dictionary<string, object>();
+        var required = new List<string>();
+
+        foreach (var prop in type.GetProperties())
+        {
+            // Get JsonPropertyName attribute if present, otherwise use property name
+            var jsonNameAttr = prop.GetCustomAttributes(typeof(JsonPropertyNameAttribute), false)
+                .OfType<JsonPropertyNameAttribute>()
+                .FirstOrDefault();
+            var jsonPropertyName = jsonNameAttr?.Name ?? prop.Name;
+
+            var propSchema = GetPropertySchema(prop.PropertyType);
+            properties[jsonPropertyName] = propSchema;
+
+            // Add to required if property type is not nullable
+            var underlyingType = Nullable.GetUnderlyingType(prop.PropertyType);
+            if (underlyingType == null && prop.PropertyType.IsValueType)
+            {
+                required.Add(jsonPropertyName);
+            }
+        }
+
+        var schema = new Dictionary<string, object>
         {
             ["type"] = "object",
-            ["properties"] = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase),
-            ["required"] = Array.Empty<string>(),
+            ["properties"] = properties,
+            ["required"] = required.ToArray(),
             ["additionalProperties"] = false
         };
+
         return JsonSerializer.SerializeToUtf8Bytes(schema);
+    }
+
+    private static Dictionary<string, object> GetPropertySchema(Type propertyType)
+    {
+        var underlyingType = Nullable.GetUnderlyingType(propertyType) ?? propertyType;
+
+        if (underlyingType == typeof(string))
+            return new Dictionary<string, object> { ["type"] = "string" };
+        
+        if (underlyingType == typeof(int) || underlyingType == typeof(long))
+            return new Dictionary<string, object> { ["type"] = "integer" };
+        
+        if (underlyingType == typeof(double) || underlyingType == typeof(float) || underlyingType == typeof(decimal))
+            return new Dictionary<string, object> { ["type"] = "number" };
+        
+        if (underlyingType == typeof(bool))
+            return new Dictionary<string, object> { ["type"] = "boolean" };
+        
+        if (underlyingType.IsArray || (underlyingType.IsGenericType && underlyingType.GetGenericTypeDefinition() == typeof(List<>)))
+        {
+            var elementType = underlyingType.IsArray ? underlyingType.GetElementType()! : underlyingType.GetGenericArguments()[0];
+            return new Dictionary<string, object>
+            {
+                ["type"] = "array",
+                ["items"] = GetPropertySchema(elementType)
+            };
+        }
+
+        // Default to string for unknown types
+        return new Dictionary<string, object> { ["type"] = "string" };
     }
 }

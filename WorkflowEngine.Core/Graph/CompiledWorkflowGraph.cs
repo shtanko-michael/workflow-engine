@@ -1,7 +1,4 @@
-using System.Collections.Concurrent;
-using System.IO;
 using System.Security.Cryptography;
-using System.Threading;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using WorkflowEngine.Core.Commands;
@@ -19,7 +16,7 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
 {
     private const string StateChannel = "state";
     private const string CurrentNodeChannel = "current_node";
-    private const string DebugLogPath = "C:\\Users\\user\\Documents\\GitHub\\talkapp-ai\\WorkflowEngine\\.cursor\\debug.log";
+    private static readonly string DebugLogPath = Path.Combine(AppContext.BaseDirectory, "workflow-debug.log");
     private static long _versionCounter = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
     private readonly Dictionary<string, WorkflowNode<TState>> _nodes;
     private readonly List<WorkflowEdge> _edges;

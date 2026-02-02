@@ -32,12 +32,15 @@ export function MessageList({
 }: MessageListProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null)
 
+  // Show streaming bubble whenever we're waiting for a response (including right after creating a dialog)
+  const showStreamingBubble = pendingResponse
+
   useEffect(() => {
     scrollRef.current?.scrollTo({
       top: scrollRef.current.scrollHeight,
       behavior: 'smooth',
     })
-  }, [messages, pendingResponse, streamingContent])
+  }, [messages, showStreamingBubble, streamingContent])
 
   return (
     <div ref={scrollRef} className="flex-1 overflow-y-auto">
@@ -62,7 +65,7 @@ export function MessageList({
           loading={loading}
         />
       ))}
-      {pendingResponse && (
+      {showStreamingBubble && (
         <StreamingBubble content={streamingContent} />
       )}
     </div>

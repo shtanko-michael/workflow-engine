@@ -1,0 +1,51 @@
+using Microsoft.Extensions.DependencyInjection;
+using WorkflowEngine.Core.Commands;
+using WorkflowEngine.Core.Execution;
+using WorkflowEngine.Core.Graph;
+using WorkflowEngine.Core.Nodes;
+using WorkflowEngine.Core.Registry;
+using WorkflowEngine.Core.State;
+using WorkflowEngine.Tests.UI.Backend.Workflows;
+
+namespace WorkflowEngine.Tests.UI.Backend.Workflows.Onboarding;
+
+/// <summary>
+/// Delegate for onboarding step methods (state, context, errorHandler, config, scopeFactory) -> command.
+/// </summary>
+internal delegate Task<WorkflowCommand<ChatWorkflowState>> StepRunner(
+    ChatWorkflowState state,
+    WorkflowRunnableContext context,
+    Func<Exception, WorkflowCommand<ChatWorkflowState>> errorHandler,
+    WorkflowRunnableConfig config,
+    IServiceScopeFactory scopeFactory);
+
+/// <summary>
+/// Onboarding workflow: welcome -> survey (loop until complete) -> thank you -> end.
+/// </summary>
+public static class OnboardingWorkflow
+{
+    public static WorkflowDeclaration<ChatWorkflowState> Build(IServiceScopeFactory scopeFactory)
+    {
+        WorkflowNode<ChatWorkflowState> Step(string name, StepRunner run) =>
+            WithContextNode.Wrap<ChatWorkflowState>(name, (s, c, e, cfg) => run(s, c, e, cfg, scopeFactory));
+
+        var workflow = new WorkflowGraph<ChatWorkflowState>()
+            .AddNode("welcome", Step("welcome", WelcomeStep.Execute))
+            .AddNode("survey", Step("survey", SurveyStep.Execute))
+            .AddNode("thankYou", Step("thankYou", ThankYouStep.Execute))
+            .AddNode(WorkflowEdges.AskHuman, AskHumanNode.Create<ChatWorkflowState>())
+            .AddEdge(WorkflowEdges.Start, "welcome");
+
+        return new WorkflowDeclaration<ChatWorkflowState>
+        {
+            Meta = new WorkflowMeta
+            {
+                Id = OnboardingConstants.WorkflowId,
+                Name = "Onboarding",
+                Description = "Short onboarding survey to tailor the system to the user",
+                Version = "1.0.0"
+            },
+            Workflow = workflow
+        };
+    }
+}

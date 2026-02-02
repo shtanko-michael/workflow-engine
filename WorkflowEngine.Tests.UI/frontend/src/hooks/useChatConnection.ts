@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { HubConnectionBuilder, type HubConnection } from '@microsoft/signalr'
 import { apiBase } from '../api/client'
 import type { Dialog, MessageWithVersions } from '../types'
@@ -12,6 +12,12 @@ type UseChatConnectionArgs = {
   setStreamingContent: React.Dispatch<React.SetStateAction<string>>
 }
 
+export type UseChatConnectionResult = {
+  connection: HubConnection
+  /** Call before setting activeDialogId to a newly created dialog so streaming chunks are received. */
+  joinDialogNow: (dialogId: string) => Promise<void>
+}
+
 export function useChatConnection({
   activeDialogId,
   setDialogs,
@@ -19,7 +25,7 @@ export function useChatConnection({
   setPendingResponse,
   setLoading,
   setStreamingContent,
-}: UseChatConnectionArgs): HubConnection {
+}: UseChatConnectionArgs): UseChatConnectionResult {
   const connection = useMemo<HubConnection>(() => {
     return new HubConnectionBuilder()
       .withUrl(`${apiBase}/hubs/chat`)
@@ -108,5 +114,19 @@ export function useChatConnection({
     setStreamingContent,
   ])
 
-  return connection
+  const joinDialogNow = useCallback(
+    async (dialogId: string) => {
+      let attempts = 0
+      while (connection.state !== 'Connected' && attempts < 50) {
+        await new Promise((resolve) => setTimeout(resolve, 100))
+        attempts++
+      }
+      if (connection.state === 'Connected') {
+        await connection.invoke('JoinDialog', dialogId).catch(console.error)
+      }
+    },
+    [connection],
+  )
+
+  return { connection, joinDialogNow }
 }
