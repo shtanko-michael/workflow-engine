@@ -22,7 +22,7 @@ public class ChatWorkflowService
     private readonly IHubContext<ChatHub> _hub;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly object _graphLock = new();
-    private CompiledWorkflowGraph<DemoChatState>? _graph;
+    private CompiledWorkflowGraph<ChatWorkflowState>? _graph;
 
     public ChatWorkflowService(
         WorkflowRegistry registry,
@@ -146,7 +146,7 @@ public class ChatWorkflowService
         await BroadcastMessagesAsync(dialog.Id, addedMessages);
     }
 
-    private CompiledWorkflowGraph<DemoChatState> GetGraph()
+    private CompiledWorkflowGraph<ChatWorkflowState> GetGraph()
     {
         if (_graph != null)
             return _graph;
@@ -158,12 +158,12 @@ public class ChatWorkflowService
 
             var workflowItem = _registry.Get(DemoChatWorkflow.WorkflowId)
                 ?? throw new InvalidOperationException("Demo workflow not registered");
-            _graph = workflowItem.Compile<DemoChatState>(_checkpointer, _logger);
+            _graph = workflowItem.Compile<ChatWorkflowState>(_checkpointer, _logger);
             return _graph;
         }
     }
 
-    private async Task<DemoChatState> RunWorkflowAsync(
+    private async Task<ChatWorkflowState> RunWorkflowAsync(
         Dialog dialog,
         HumanMessage? resumeMessage,
         string? checkpointId)
@@ -188,14 +188,14 @@ public class ChatWorkflowService
         if (!string.IsNullOrWhiteSpace(checkpointId))
             config.Configurable["checkpoint_id"] = checkpointId;
 
-        var command = WorkflowCommand<DemoChatState>.Create(
+        var command = WorkflowCommand<ChatWorkflowState>.Create(
             resume: resumeMessage);
 
         var graph = GetGraph();
         return await graph.InvokeAsync(command, config);
     }
 
-    private IReadOnlyCollection<ChatMessage> SyncMessages(Dialog dialog, DemoChatState state)
+    private IReadOnlyCollection<ChatMessage> SyncMessages(Dialog dialog, ChatWorkflowState state)
     {
         var mapped = new List<ChatMessage>();
 
@@ -226,7 +226,7 @@ public class ChatWorkflowService
         return _store.AddMessages(dialog.Id, mapped);
     }
 
-    private async Task UpdateDialogCheckpointAsync(Dialog dialog, DemoChatState state)
+    private async Task UpdateDialogCheckpointAsync(Dialog dialog, ChatWorkflowState state)
     {
         dialog.LastInterruptRequestId = state.InterruptRequestId;
         dialog.LastCheckpointId = await GetLatestCheckpointIdAsync(dialog.ThreadId);

@@ -35,7 +35,7 @@ public record MessageWithVersionsDto(
     List<MessageVersionDto> Versions,
     DateTimeOffset CreatedAt);
 
-public record CreateDialogRequest(string? Title);
+public record CreateDialogRequest(string? Title, string? WorkflowId);
 
 public record SendMessageRequest(string Content, string ThreadId, string CheckpointId, string? RequestId);
 

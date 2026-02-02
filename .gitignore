@@ -61,6 +61,7 @@ dist-ssr/
 *.swp
 *~
 
-// .NET
+# .NET
 */**/bin/*
 */**/obj/*
+*/**/appsettings.*.json

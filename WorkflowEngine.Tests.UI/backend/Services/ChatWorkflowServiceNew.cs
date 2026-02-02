@@ -26,7 +26,7 @@ public class ChatWorkflowServiceNew
     private readonly IHubContext<ChatHub> _hub;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly object _graphLock = new();
-    private CompiledWorkflowGraph<DemoChatState>? _graph;
+    private readonly Dictionary<string, CompiledWorkflowGraph<ChatWorkflowState>> _graphs = new();
 
     public ChatWorkflowServiceNew(
         WorkflowRegistry registry,
@@ -46,23 +46,24 @@ public class ChatWorkflowServiceNew
         _scopeFactory = scopeFactory;
     }
 
-    public async Task<ConversationEntity> CreateDialogAsync(string? title)
+    public async Task<ConversationEntity> CreateDialogAsync(string workflowId, string? title)
     {
         var conversation = new ConversationEntity
         {
             Id = Guid.NewGuid().ToString(),
             ThreadId = Guid.NewGuid().ToString(),
             Title = string.IsNullOrWhiteSpace(title) ? "New chat" : title.Trim(),
+            WorkflowType = workflowId ?? DemoChatWorkflow.WorkflowId,
             CreatedAt = DateTime.UtcNow,
             UpdatedAt = DateTime.UtcNow
         };
 
         await _conversationRepo.CreateAsync(conversation);
 
-        var state = await RunWorkflowAsync(conversation.ThreadId!, null, null, null);
+        var state = await RunWorkflowAsync(conversation.ThreadId!, conversation.WorkflowType!, null, null, null);
         var latestCheckpointId = state.LastCheckpointId;
 
-        var savedMessages = await SaveMessagesFromStateAsync(conversation.Id, state, null, latestCheckpointId, null);
+        var savedMessages = await SaveMessagesFromStateAsync(conversation.Id, state, null, latestCheckpointId!, null);
         var lastMessage = savedMessages.LastOrDefault();
         if (lastMessage != null)
         {
@@ -94,6 +95,14 @@ public class ChatWorkflowServiceNew
         return await _conversationRepo.GetAllAsync();
     }
 
+    public async Task DeleteDialogAsync(string conversationId)
+    {
+        var conversation = await _conversationRepo.GetByIdAsync(conversationId);
+        if (conversation == null)
+            throw new InvalidOperationException("Conversation not found.");
+        await _conversationRepo.DeleteAsync(conversationId);
+    }
+
     public async Task<List<MessageEntity>> GetMessagesAsync(string conversationId)
     {
         var conversation = await _conversationRepo.GetByIdAsync(conversationId);
@@ -102,7 +111,7 @@ public class ChatWorkflowServiceNew
         return await _messageRepo.GetBranchToLeafAsync(conversationId, conversation.ActiveLeafMessageId);
     }
 
-    public async Task SendMessageAsync(
+    public async Task<MessageEntity> SendMessageAsync(
         string conversationId,
         string content,
         string checkpointId)
@@ -149,6 +158,8 @@ public class ChatWorkflowServiceNew
                 _logger.LogError(ex, "Failed to process workflow for conversation {ConversationId}", conversationId);
             }
         });
+
+        return userMessage;
     }
 
     public async Task<List<MessageEntity>> EditMessageAsync(
@@ -190,7 +201,7 @@ public class ChatWorkflowServiceNew
                 branchCheckpointNs);
         }
 
-        var state = await RunWorkflowAsync(conversation.ThreadId!, humanMessage, parentCheckpointId, branchCheckpointNs);
+        var state = await RunWorkflowAsync(conversation.ThreadId!, conversation.WorkflowType!, humanMessage, parentCheckpointId, branchCheckpointNs);
         var latestCheckpointId = state.LastCheckpointId;
 
         var newMessages = await SaveMessagesFromStateAsync(conversationId, state, newMessage.Id, latestCheckpointId, branchCheckpointNs);
@@ -252,7 +263,7 @@ public class ChatWorkflowServiceNew
             return;
         }
 
-        var state = await RunWorkflowAsync(conversation.ThreadId!, humanMessage, checkpointId, checkpointNs);
+        var state = await RunWorkflowAsync(conversation.ThreadId!, conversation.WorkflowType!, humanMessage, checkpointId, checkpointNs);
         var latestCheckpointId = state.LastCheckpointId;
         var savedMessages = await SaveMessagesFromStateAsync(conversationId, state, userMessageId, latestCheckpointId, checkpointNs);
 
@@ -272,7 +283,7 @@ public class ChatWorkflowServiceNew
 
     private async Task<List<MessageEntity>> SaveMessagesFromStateAsync(
         string conversationId,
-        DemoChatState state,
+        ChatWorkflowState state,
         string? parentMessageId,
         string? checkpointId = null,
         string? checkpointNs = null)
@@ -324,25 +335,24 @@ public class ChatWorkflowServiceNew
         return savedMessages;
     }
 
-    private CompiledWorkflowGraph<DemoChatState> GetGraph()
+    private CompiledWorkflowGraph<ChatWorkflowState> GetGraph(string workflowId)
     {
-        if (_graph != null)
-            return _graph;
-
         lock (_graphLock)
         {
-            if (_graph != null)
-                return _graph;
+            if (_graphs.TryGetValue(workflowId, out var cached))
+                return cached;
 
-            var workflowItem = _registry.Get(DemoChatWorkflow.WorkflowId)
-                ?? throw new InvalidOperationException("Demo workflow not registered");
-            _graph = workflowItem.Compile<DemoChatState>(_checkpointer, _logger);
-            return _graph;
+            var workflowItem = _registry.Get(workflowId)
+                ?? throw new InvalidOperationException($"Workflow '{workflowId}' not registered.");
+            var graph = workflowItem.Compile<ChatWorkflowState>(_checkpointer, _logger);
+            _graphs[workflowId] = graph;
+            return graph;
         }
     }
 
-    private async Task<DemoChatState> RunWorkflowAsync(
+    private async Task<ChatWorkflowState> RunWorkflowAsync(
         string threadId,
+        string workflowId,
         HumanMessage? resumeMessage,
         string? checkpointId,
         string? checkpointNs)
@@ -359,7 +369,7 @@ public class ChatWorkflowServiceNew
                 Tracking = new ClientTrackingContext
                 {
                     ThreadId = threadId,
-                    WorkflowType = DemoChatWorkflow.WorkflowId
+                    WorkflowType = workflowId
                 }
             }
         };
@@ -369,8 +379,8 @@ public class ChatWorkflowServiceNew
         if (!string.IsNullOrWhiteSpace(checkpointNs))
             config.Configurable["checkpoint_ns"] = checkpointNs;
 
-        var command = WorkflowCommand<DemoChatState>.Create(resume: resumeMessage);
-        var graph = GetGraph();
+        var command = WorkflowCommand<ChatWorkflowState>.Create(resume: resumeMessage);
+        var graph = GetGraph(workflowId);
         return await graph.InvokeAsync(command, config);
     }
 

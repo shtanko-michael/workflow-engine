@@ -6,18 +6,13 @@ using WorkflowEngine.Core.State;
 
 namespace WorkflowEngine.Tests.UI.Backend.Workflows;
 
-public class DemoChatState : WorkflowStateBase
-{
-    public string? LastUserMessage { get; set; }
-}
-
 public static class DemoChatWorkflow
 {
     public const string WorkflowId = "demo_chat";
 
-    public static WorkflowDeclaration<DemoChatState> Build()
+    public static WorkflowDeclaration<ChatWorkflowState> Build()
     {
-        var workflow = new WorkflowGraph<DemoChatState>()
+        var workflow = new WorkflowGraph<ChatWorkflowState>()
             .AddNode("start", (state, ctx, errorHandler, cfg) =>
             {
                 state.Messages.Add(new AIMessage
@@ -25,7 +20,7 @@ public static class DemoChatWorkflow
                     Content = "Hello! This is a demo workflow. Ask me anything or type \"bye\" to finish."
                 });
                 state.InterruptCaller = "handleInput";
-                return Task.FromResult(WorkflowCommand<DemoChatState>.Create(
+                return Task.FromResult(WorkflowCommand<ChatWorkflowState>.Create(
                     gotoNode: WorkflowEdges.AskHuman,
                     update: state));
             })
@@ -38,26 +33,26 @@ public static class DemoChatWorkflow
                 if (string.Equals(content, "bye", StringComparison.OrdinalIgnoreCase))
                 {
                     state.Messages.Add(new AIMessage { Content = "Goodbye! Workflow completed." });
-                    return Task.FromResult(WorkflowCommand<DemoChatState>.Create(
+                    return Task.FromResult(WorkflowCommand<ChatWorkflowState>.Create(
                         gotoNode: WorkflowEdges.End,
                         update: state));
                 }
 
                 state.Messages.Add(new AIMessage { Content = $"You said: {content}" });
-                return Task.FromResult(WorkflowCommand<DemoChatState>.Create(
+                return Task.FromResult(WorkflowCommand<ChatWorkflowState>.Create(
                     gotoNode: WorkflowEdges.AskHuman,
                     update: state));
             })
-            .AddNode(WorkflowEdges.AskHuman, AskHumanNode.Create<DemoChatState>())
+            .AddNode(WorkflowEdges.AskHuman, AskHumanNode.Create<ChatWorkflowState>())
             .AddEdge(WorkflowEdges.Start, "start");
 
-        return new WorkflowDeclaration<DemoChatState>
+        return new WorkflowDeclaration<ChatWorkflowState>
         {
             Meta = new WorkflowMeta
             {
                 Id = WorkflowId,
-                Name = "Demo Chat Workflow",
-                Description = "Simple chat workflow for UI testing",
+                Name = "Demo Chat",
+                Description = "Simple echo chat for UI testing",
                 Version = "1.0.0"
             },
             Workflow = workflow

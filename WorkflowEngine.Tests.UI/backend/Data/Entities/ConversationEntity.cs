@@ -31,6 +31,9 @@ public class ConversationEntity
     [Column("active_leaf_message_id")]
     public string? ActiveLeafMessageId { get; set; }
 
+    [Column("workflow_type")]
+    public string? WorkflowType { get; set; }
+
     public MessageEntity? ActiveLeafMessage { get; set; }
     public ICollection<MessageEntity> Messages { get; set; } = new List<MessageEntity>();
 }

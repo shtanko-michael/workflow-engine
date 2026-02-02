@@ -13,7 +13,7 @@ public static class DtoMapper
             conversation.Id,
             conversation.Title ?? "",
             conversation.ThreadId ?? "",
-            DemoChatWorkflow.WorkflowId,
+            conversation.WorkflowType ?? DemoChatWorkflow.WorkflowId,
             conversation.LastCheckpointId,
             conversation.LastInterruptRequestId,
             conversation.CreatedAt,
@@ -37,5 +37,20 @@ public static class DtoMapper
                 m.CheckpointId ?? "",
                 m.CreatedAt)).ToList(),
             active.CreatedAt);
+    }
+
+    /// <summary>Map a single message (e.g. newly created user message) to MessageWithVersionsDto.</summary>
+    public static MessageWithVersionsDto FromSingleMessage(MessageEntity m)
+    {
+        var createdAt = new DateTimeOffset(m.CreatedAt, TimeSpan.Zero);
+        return new MessageWithVersionsDto(
+            m.Id,
+            m.Role,
+            m.Id,
+            m.Content,
+            0,
+            1,
+            new List<MessageVersionDto> { new MessageVersionDto(m.Id, m.Id, m.Content, m.CheckpointId ?? "", createdAt) },
+            createdAt);
     }
 }

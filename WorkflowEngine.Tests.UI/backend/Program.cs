@@ -6,6 +6,7 @@ using WorkflowEngine.Persistence.Postgres;
 using WorkflowEngine.Tests.UI.Backend.Data;
 using WorkflowEngine.Tests.UI.Backend.Data.Repositories;
 using WorkflowEngine.Tests.UI.Backend.Hubs;
+using WorkflowEngine.Tests.UI.Backend.LLM;
 using WorkflowEngine.Tests.UI.Backend.Services;
 using WorkflowEngine.Tests.UI.Backend.Workflows;
 
@@ -35,6 +36,9 @@ builder.Services.AddWorkflowEngine();
 builder.Services.AddPostgresCheckpointer(
     builder.Configuration.GetConnectionString("Checkpointer") ?? string.Empty);
 
+builder.Services.Configure<OpenAIOptions>(builder.Configuration.GetSection("LLM:OpenAI"));
+builder.Services.AddSingleton<ILLMProviderClient, OpenAILLMProvider>();
+
 builder.Services.AddScoped<IConversationRepository, ConversationRepository>();
 builder.Services.AddScoped<IMessageRepository, MessageRepository>();
 // InMemoryChatStore kept for backward compatibility with old API (v1)
@@ -59,6 +63,8 @@ using (var scope = app.Services.CreateScope())
 
     var registry = scope.ServiceProvider.GetRequiredService<WorkflowRegistry>();
     registry.Register(DemoChatWorkflow.Build());
+    var scopeFactory = scope.ServiceProvider.GetRequiredService<IServiceScopeFactory>();
+    registry.Register(AIChatWorkflow.Build(scopeFactory));
 }
 
 app.UseCors("ui");

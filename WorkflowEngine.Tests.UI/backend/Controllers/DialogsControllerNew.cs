@@ -4,18 +4,19 @@ using WorkflowEngine.Tests.UI.Backend.Data.Mappers;
 using WorkflowEngine.Tests.UI.Backend.Data.Repositories;
 using WorkflowEngine.Tests.UI.Backend.Models;
 using WorkflowEngine.Tests.UI.Backend.Services;
+using WorkflowEngine.Tests.UI.Backend.Workflows;
 
 namespace WorkflowEngine.Tests.UI.Backend.Controllers;
 
 [ApiController]
-[Route("api/v2/dialogs")]
-public class DialogsControllerNew : ControllerBase
+[Route("api/v1/dialogs")]
+public class DialogsController : ControllerBase
 {
     private readonly ChatWorkflowServiceNew _workflowService;
     private readonly IConversationRepository _conversationRepo;
     private readonly IMessageRepository _messageRepo;
 
-    public DialogsControllerNew(
+    public DialogsController(
         ChatWorkflowServiceNew workflowService,
         IConversationRepository conversationRepo,
         IMessageRepository messageRepo)
@@ -33,10 +34,25 @@ public class DialogsControllerNew : ControllerBase
         return Ok(dtos);
     }
 
+    [HttpDelete("{dialogId}")]
+    public async Task<ActionResult> DeleteDialog(string dialogId)
+    {
+        try
+        {
+            await _workflowService.DeleteDialogAsync(dialogId);
+            return NoContent();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return NotFound(ex.Message);
+        }
+    }
+
     [HttpPost]
     public async Task<ActionResult<DialogDto>> CreateDialog([FromBody] CreateDialogRequest request)
     {
-        var conversation = await _workflowService.CreateDialogAsync(request.Title);
+        var workflowId = request.WorkflowId ?? DemoChatWorkflow.WorkflowId;
+        var conversation = await _workflowService.CreateDialogAsync(workflowId, request.Title);
         return Ok(DtoMapper.ToDto(conversation));
     }
 
@@ -69,7 +85,7 @@ public class DialogsControllerNew : ControllerBase
     }
 
     [HttpPost("{dialogId}/messages")]
-    public async Task<ActionResult> SendMessage(
+    public async Task<ActionResult<MessageWithVersionsDto>> SendMessage(
         string dialogId,
         [FromBody] SendMessageRequest request)
     {
@@ -78,12 +94,12 @@ public class DialogsControllerNew : ControllerBase
 
         try
         {
-            await _workflowService.SendMessageAsync(
+            var msg = await _workflowService.SendMessageAsync(
                 dialogId,
                 request.Content,
                 request.CheckpointId);
 
-            return Ok();
+            return Ok(DtoMapper.FromSingleMessage(msg));
         }
         catch (InvalidOperationException ex)
         {

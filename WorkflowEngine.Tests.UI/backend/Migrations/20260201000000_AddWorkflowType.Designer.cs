@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using WorkflowEngine.Tests.UI.Backend.Data;
@@ -11,9 +12,11 @@ using WorkflowEngine.Tests.UI.Backend.Data;
 namespace WorkflowEngine.Tests.UI.Backend.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260201000000_AddWorkflowType")]
+    partial class AddWorkflowType
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -48,10 +51,6 @@ namespace WorkflowEngine.Tests.UI.Backend.Migrations
                         .HasColumnType("text")
                         .HasColumnName("thread_id");
 
-                    b.Property<string>("WorkflowType")
-                        .HasColumnType("text")
-                        .HasColumnName("workflow_type");
-
                     b.Property<string>("Title")
                         .HasColumnType("text")
                         .HasColumnName("title");
@@ -59,6 +58,10 @@ namespace WorkflowEngine.Tests.UI.Backend.Migrations
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at");
+
+                    b.Property<string>("WorkflowType")
+                        .HasColumnType("text")
+                        .HasColumnName("workflow_type");
 
                     b.HasKey("Id");
 

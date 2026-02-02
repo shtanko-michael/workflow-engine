@@ -43,8 +43,15 @@ public class ConversationRepository : IConversationRepository
 
     public async Task DeleteAsync(string id)
     {
-        await _context.Conversations
-            .Where(c => c.Id == id)
-            .ExecuteDeleteAsync();
+        var conversation = await _context.Conversations.FindAsync(id);
+        if (conversation == null)
+            return;
+
+        // Break circular FK: Conversation.ActiveLeafMessageId -> Message.ConversationId -> Conversation
+        conversation.ActiveLeafMessageId = null;
+        await _context.SaveChangesAsync();
+
+        _context.Conversations.Remove(conversation);
+        await _context.SaveChangesAsync();
     }
 }

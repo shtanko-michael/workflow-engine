@@ -10,14 +10,15 @@
     <PackageId>WorkflowEngine.Bundle</PackageId>
     <Version>1.0.0</Version>
     <Authors>WorkflowEngine</Authors>
-    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+    <PackageTags>workflow;engine;bundle;core;ai;persistence;memory;postgres</PackageTags>
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
     <IncludeBuildOutput>true</IncludeBuildOutput>
+    <PackageOutputPath>$(MSBuildThisFileDirectory)..\nupkgs</PackageOutputPath>
+    <RepositoryType>git</RepositoryType>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\WorkflowEngine.Core\WorkflowEngine.Core.csproj" />
-    <ProjectReference Include="..\WorkflowEngine.AI\WorkflowEngine.AI.csproj" />
-    <ProjectReference Include="..\WorkflowEngine.Persistence\WorkflowEngine.Persistence.csproj" />
     <ProjectReference Include="..\WorkflowEngine.Persistence.Memory\WorkflowEngine.Persistence.Memory.csproj" />
     <ProjectReference Include="..\WorkflowEngine.Persistence.Postgres\WorkflowEngine.Persistence.Postgres.csproj" />
   </ItemGroup>
