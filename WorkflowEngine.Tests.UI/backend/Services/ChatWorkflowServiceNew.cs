@@ -162,7 +162,11 @@ public class ChatWorkflowServiceNew
         return userMessage;
     }
 
-    public async Task<List<MessageEntity>> EditMessageAsync(
+    /// <summary>
+    /// Edits a user message: creates a new sibling with new content, switches active branch to it,
+    /// returns the new branch (so UI can show edited message and clear messages below), and runs the workflow in background with streaming.
+    /// </summary>
+    public async Task<List<MessageWithVersionsDto>> EditMessageAsync(
         string conversationId,
         string messageId,
         string newContent)
@@ -178,18 +182,14 @@ public class ChatWorkflowServiceNew
         var newMessage = await _messageRepo.CreateSiblingAsync(messageId, newContent);
         await _messageRepo.UpdateActiveLeafAsync(conversationId, newMessage.Id);
 
+        conversation.ActiveLeafMessageId = newMessage.Id;
+        await _conversationRepo.UpdateAsync(conversation);
+
         var parentMessage = message.ParentId != null
             ? await _messageRepo.GetMessageAsync(message.ParentId)
             : null;
         var parentCheckpointId = parentMessage?.CheckpointId;
         var parentCheckpointNs = parentMessage?.CheckpointNs;
-
-        var humanMessage = new HumanMessage
-        {
-            Id = newMessage.Id,
-            Content = newContent,
-            RequestId = newMessage.RequestId
-        };
 
         var branchCheckpointNs = newMessage.CheckpointNs ?? newMessage.Id;
         if (!string.IsNullOrWhiteSpace(parentCheckpointId))
@@ -201,24 +201,68 @@ public class ChatWorkflowServiceNew
                 branchCheckpointNs);
         }
 
-        var state = await RunWorkflowAsync(conversation.ThreadId!, conversation.WorkflowType!, humanMessage, parentCheckpointId, branchCheckpointNs);
-        var latestCheckpointId = state.LastCheckpointId;
+        var branchWithAlternatives = await GetBranchWithAlternativesAsync(conversationId);
+        var dtos = branchWithAlternatives.Select(DtoMapper.ToDto).ToList();
 
-        var newMessages = await SaveMessagesFromStateAsync(conversationId, state, newMessage.Id, latestCheckpointId, branchCheckpointNs);
-        var lastSaved = newMessages.LastOrDefault();
-        if (lastSaved != null)
+        _ = Task.Run(async () =>
         {
-            conversation.ActiveLeafMessageId = lastSaved.Id;
+            try
+            {
+                using var scope = _scopeFactory.CreateScope();
+                var scopedService = scope.ServiceProvider.GetRequiredService<ChatWorkflowServiceNew>();
+                await scopedService.ProcessWorkflowAfterEditAsync(
+                    conversationId,
+                    newMessage.Id,
+                    newContent,
+                    newMessage.RequestId,
+                    parentCheckpointId,
+                    branchCheckpointNs);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to process workflow after edit for conversation {ConversationId}", conversationId);
+            }
+        });
+
+        return dtos;
+    }
+
+    private async Task ProcessWorkflowAfterEditAsync(
+        string conversationId,
+        string newMessageId,
+        string newContent,
+        string? requestId,
+        string? parentCheckpointId,
+        string? branchCheckpointNs)
+    {
+        var conversation = await _conversationRepo.GetByIdAsync(conversationId);
+        if (conversation == null)
+        {
+            _logger.LogWarning("Conversation {ConversationId} not found for workflow processing after edit", conversationId);
+            return;
         }
 
-        conversation.LastCheckpointId = latestCheckpointId;
+        var humanMessage = new HumanMessage
+        {
+            Id = newMessageId,
+            Content = newContent,
+            RequestId = requestId
+        };
+
+        var state = await RunWorkflowAsync(conversation.ThreadId!, conversation.WorkflowType!, humanMessage, parentCheckpointId, branchCheckpointNs, conversationId);
+        var latestCheckpointId = state.LastCheckpointId;
+        var savedMessages = await SaveMessagesFromStateAsync(conversationId, state, newMessageId, latestCheckpointId, branchCheckpointNs);
+
+        var lastSaved = savedMessages.LastOrDefault();
+        if (lastSaved != null)
+            conversation.ActiveLeafMessageId = lastSaved.Id;
+
         conversation.LastInterruptRequestId = state.InterruptRequestId;
+        conversation.LastCheckpointId = latestCheckpointId;
         await _conversationRepo.UpdateAsync(conversation);
 
         await BroadcastDialogUpdatedAsync(conversation);
         await BroadcastMessagesUpdatedAsync(conversationId);
-
-        return newMessages;
     }
 
     public async Task SwitchVersionAsync(string conversationId, string messageId)
@@ -393,26 +437,6 @@ public class ChatWorkflowServiceNew
         return await graph.InvokeAsync(command, config);
     }
 
-    private async Task<string?> GetLatestCheckpointIdAsync(string threadId)
-    {
-        var config = new WorkflowRunnableConfig
-        {
-            Configurable = new Dictionary<string, object>
-            {
-                ["thread_id"] = threadId
-            }
-        };
-
-        var checkpoint = await _checkpointer.GetAsync(config);
-        if (checkpoint?.Checkpoint == null)
-            return null;
-
-        if (checkpoint.Config.Configurable.TryGetValue("checkpoint_id", out var idValue))
-            return idValue?.ToString();
-
-        return checkpoint.Checkpoint.Id;
-    }
-
     private static string? ResolveCheckpointNamespace(MessageEntity message)
     {
         return !string.IsNullOrWhiteSpace(message.CheckpointNs) ? message.CheckpointNs : null;
@@ -462,7 +486,7 @@ public class ChatWorkflowServiceNew
         await _hub.Clients.Group(conversation.Id).SendAsync("dialogUpdated", payload);
     }
 
-    private async Task BroadcastMessagesUpdatedAsync(string conversationId)
+    private async Task<List<MessageWithAlternatives>> GetBranchWithAlternativesAsync(string conversationId)
     {
         var branch = await GetMessagesAsync(conversationId);
         var messagesWithAlternatives = new List<MessageWithAlternatives>();
@@ -485,6 +509,12 @@ public class ChatWorkflowServiceNew
             });
         }
 
+        return messagesWithAlternatives;
+    }
+
+    private async Task BroadcastMessagesUpdatedAsync(string conversationId)
+    {
+        var messagesWithAlternatives = await GetBranchWithAlternativesAsync(conversationId);
         var payload = messagesWithAlternatives.Select(DtoMapper.ToDto).ToList();
         await _hub.Clients.Group(conversationId).SendAsync("messagesUpdated", payload);
     }

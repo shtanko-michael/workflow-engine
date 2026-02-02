@@ -1,0 +1,70 @@
+import { useRef, useEffect } from 'react'
+import { MessageRow } from './MessageRow'
+import { StreamingBubble } from './StreamingBubble'
+import type { MessageWithVersions } from '../../types'
+
+type MessageListProps = {
+  messages: MessageWithVersions[]
+  pendingResponse: boolean
+  streamingContent: string
+  editingMessageId: string | null
+  editContent: string
+  onEditContentChange: (value: string) => void
+  onStartEdit: (messageId: string, content: string) => void
+  onSaveEdit: (versionId: string, content: string) => void
+  onCancelEdit: () => void
+  onSwitchVersion: (versionId: string) => void
+  loading?: boolean
+}
+
+export function MessageList({
+  messages,
+  pendingResponse,
+  streamingContent,
+  editingMessageId,
+  editContent,
+  onEditContentChange,
+  onStartEdit,
+  onSaveEdit,
+  onCancelEdit,
+  onSwitchVersion,
+  loading = false,
+}: MessageListProps) {
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({
+      top: scrollRef.current.scrollHeight,
+      behavior: 'smooth',
+    })
+  }, [messages, pendingResponse, streamingContent])
+
+  return (
+    <div ref={scrollRef} className="flex-1 overflow-y-auto">
+      {messages.length === 0 && !pendingResponse && (
+        <div className="mx-auto mt-16 max-w-3xl px-6 text-center text-sm text-neutral-500">
+          No messages yet.
+        </div>
+      )}
+      {messages.map((message, index) => (
+        <MessageRow
+          key={`${message.messageId}-${message.activeVersionId}-${index}`}
+          message={message}
+          isEditing={editingMessageId === message.activeVersionId}
+          editContent={editContent}
+          onEditContentChange={onEditContentChange}
+          onStartEdit={() =>
+            onStartEdit(message.activeVersionId, message.content)
+          }
+          onSaveEdit={() => onSaveEdit(message.activeVersionId, editContent)}
+          onCancelEdit={onCancelEdit}
+          onSwitchVersion={onSwitchVersion}
+          loading={loading}
+        />
+      ))}
+      {pendingResponse && (
+        <StreamingBubble content={streamingContent} />
+      )}
+    </div>
+  )
+}

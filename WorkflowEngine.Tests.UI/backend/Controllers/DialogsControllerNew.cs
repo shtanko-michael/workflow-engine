@@ -108,7 +108,7 @@ public class DialogsController : ControllerBase
     }
 
     [HttpPost("{dialogId}/messages/edit")]
-    public async Task<ActionResult> EditMessage(
+    public async Task<ActionResult<List<MessageWithVersionsDto>>> EditMessage(
         string dialogId,
         [FromBody] EditMessageRequest request)
     {
@@ -117,12 +117,12 @@ public class DialogsController : ControllerBase
 
         try
         {
-            await _workflowService.EditMessageAsync(
+            var messages = await _workflowService.EditMessageAsync(
                 dialogId,
                 request.VersionId,
                 request.Content);
 
-            return Ok();
+            return Ok(messages);
         }
         catch (InvalidOperationException ex)
         {
