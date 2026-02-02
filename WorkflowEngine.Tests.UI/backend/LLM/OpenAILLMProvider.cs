@@ -58,6 +58,31 @@ public sealed class OpenAILLMProvider : ILLMProviderClient
         return await CompleteAsync(client, messages, m, cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task<LLMResponse> ExecuteStreamAsync(
+        LLMRequest request,
+        Func<string, Task>? onChunk,
+        string? model = null,
+        CancellationToken cancellationToken = default)
+    {
+        var messages = ToChatMessages(request.Messages);
+        var m = model ?? _defaultModel;
+        var client = GetClient(m);
+        var fullContent = new System.Text.StringBuilder();
+        await foreach (var update in client.CompleteChatStreamingAsync(messages, cancellationToken: cancellationToken).ConfigureAwait(false))
+        {
+            foreach (var contentUpdate in update.ContentUpdate)
+            {
+                if (contentUpdate.Kind == ChatMessageContentPartKind.Text && !string.IsNullOrEmpty(contentUpdate.Text))
+                {
+                    fullContent.Append(contentUpdate.Text);
+                    if (onChunk != null)
+                        await onChunk(contentUpdate.Text).ConfigureAwait(false);
+                }
+            }
+        }
+        return new LLMResponse { Content = fullContent.ToString(), Model = m };
+    }
+
     public async Task<LLMResponse<TOutput>> ExecuteWithStructuredOutputAsync<TOutput>(
         LLMRequest request,
         string? model = null,

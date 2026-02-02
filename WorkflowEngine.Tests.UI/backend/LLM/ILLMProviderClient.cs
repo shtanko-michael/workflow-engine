@@ -21,6 +21,15 @@ public interface ILLMProviderClient
         string? model = null,
         CancellationToken cancellationToken = default)
         where TOutput : class;
+
+    /// <summary>
+    /// Execute chat completion with streaming; invokes onChunk for each text delta and returns full response at the end.
+    /// </summary>
+    Task<LLMResponse> ExecuteStreamAsync(
+        LLMRequest request,
+        Func<string, Task>? onChunk,
+        string? model = null,
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>

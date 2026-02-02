@@ -263,7 +263,7 @@ public class ChatWorkflowServiceNew
             return;
         }
 
-        var state = await RunWorkflowAsync(conversation.ThreadId!, conversation.WorkflowType!, humanMessage, checkpointId, checkpointNs);
+        var state = await RunWorkflowAsync(conversation.ThreadId!, conversation.WorkflowType!, humanMessage, checkpointId, checkpointNs, conversationId);
         var latestCheckpointId = state.LastCheckpointId;
         var savedMessages = await SaveMessagesFromStateAsync(conversationId, state, userMessageId, latestCheckpointId, checkpointNs);
 
@@ -355,7 +355,8 @@ public class ChatWorkflowServiceNew
         string workflowId,
         HumanMessage? resumeMessage,
         string? checkpointId,
-        string? checkpointNs)
+        string? checkpointNs,
+        string? conversationId = null)
     {
         var config = new WorkflowRunnableConfig
         {
@@ -378,6 +379,14 @@ public class ChatWorkflowServiceNew
             config.Configurable["checkpoint_id"] = checkpointId;
         if (!string.IsNullOrWhiteSpace(checkpointNs))
             config.Configurable["checkpoint_ns"] = checkpointNs;
+        if (!string.IsNullOrWhiteSpace(conversationId))
+        {
+            var convId = conversationId;
+            config.Configurable["stream_chunk_callback"] = (Func<string, Task>)(async (chunk) =>
+            {
+                await _hub.Clients.Group(convId).SendAsync("assistantChunk", convId, chunk);
+            });
+        }
 
         var command = WorkflowCommand<ChatWorkflowState>.Create(resume: resumeMessage);
         var graph = GetGraph(workflowId);

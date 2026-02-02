@@ -65,6 +65,7 @@ function App() {
   const [showScenarioModal, setShowScenarioModal] = useState(false)
   const [newDialogTitle, setNewDialogTitle] = useState('')
   const [dialogToDelete, setDialogToDelete] = useState<Dialog | null>(null)
+  const [streamingContent, setStreamingContent] = useState('')
   const messagesRef = useRef<HTMLDivElement | null>(null)
 
   const connection = useMemo<HubConnection>(() => {
@@ -113,19 +114,26 @@ function App() {
       )
     })
 
+    connection.on('assistantChunk', (dialogId: string, chunk: string) => {
+      if (dialogId !== activeDialogId) return
+      setStreamingContent((prev) => prev + (chunk ?? ''))
+    })
+
     connection.on('messagesUpdated', (payload: MessageWithVersions[]) => {
       if (!payload || payload.length === 0) return
       console.log('messagesUpdated', payload)
       setMessages(payload)
       setPendingResponse(false)
       setLoading(false)
+      setStreamingContent('')
     })
 
     return () => {
       connection.off('dialogUpdated')
+      connection.off('assistantChunk')
       connection.off('messagesUpdated')
     }
-  }, [connection])
+  }, [connection, activeDialogId])
 
   useEffect(() => {
     if (!activeDialogId) {
@@ -158,6 +166,7 @@ function App() {
 
   useEffect(() => {
     setPendingResponse(false)
+    setStreamingContent('')
   }, [activeDialogId])
 
   const activeDialog = dialogs.find((dialog) => dialog.id === activeDialogId) ?? null
@@ -255,6 +264,7 @@ function App() {
     setInput('')
     setLoading(true)
     setPendingResponse(true)
+    setStreamingContent('')
 
     try {
       const newMessage = await fetchJson<MessageWithVersions>(
@@ -576,12 +586,18 @@ function App() {
                   <div className="mb-1 text-xs uppercase tracking-wide text-neutral-500">
                     Assistant
                   </div>
-                  <div className="flex items-center gap-2 text-sm text-neutral-300">
-                    <span className="h-2 w-2 animate-bounce rounded-full bg-neutral-400" />
-                    <span className="h-2 w-2 animate-bounce rounded-full bg-neutral-400 [animation-delay:150ms]" />
-                    <span className="h-2 w-2 animate-bounce rounded-full bg-neutral-400 [animation-delay:300ms]" />
-                    <span className="ml-2 text-neutral-500">Thinking...</span>
-                  </div>
+                  {streamingContent ? (
+                    <div className="whitespace-pre-wrap text-sm leading-relaxed text-neutral-100">
+                      {streamingContent}
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 text-sm text-neutral-300">
+                      <span className="h-2 w-2 animate-bounce rounded-full bg-neutral-400" />
+                      <span className="h-2 w-2 animate-bounce rounded-full bg-neutral-400 [animation-delay:150ms]" />
+                      <span className="h-2 w-2 animate-bounce rounded-full bg-neutral-400 [animation-delay:300ms]" />
+                      <span className="ml-2 text-neutral-500">Thinking...</span>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

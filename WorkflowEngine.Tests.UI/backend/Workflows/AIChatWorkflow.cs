@@ -55,10 +55,16 @@ public static class AIChatWorkflow
                         .ToList()
                 };
 
+                Func<string, Task>? streamCallback = null;
+                if (cfg.Configurable.TryGetValue("stream_chunk_callback", out var callbackObj) && callbackObj is Func<string, Task> cb)
+                    streamCallback = cb;
+
                 using (var scope = scopeFactory.CreateScope())
                 {
                     var llm = scope.ServiceProvider.GetRequiredService<ILLMProviderClient>();
-                    var response = await llm.ExecuteAsync(request, model: null, CancellationToken.None).ConfigureAwait(false);
+                    var response = streamCallback != null
+                        ? await llm.ExecuteStreamAsync(request, streamCallback, model: null, CancellationToken.None).ConfigureAwait(false)
+                        : await llm.ExecuteAsync(request, model: null, CancellationToken.None).ConfigureAwait(false);
                     state.Messages.Add(new AIMessage { Content = response.Content ?? "" });
                 }
 
