@@ -64,4 +64,4 @@ dist-ssr/
 # .NET
 */**/bin/*
 */**/obj/*
-*/**/appsettings.*.json
+WorkflowEngine.Tests.UI/backend/appsettings.*.json
