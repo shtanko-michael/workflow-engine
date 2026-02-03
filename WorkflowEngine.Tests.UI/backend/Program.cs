@@ -44,7 +44,6 @@ builder.Services.AddScoped<IConversationRepository, ConversationRepository>();
 builder.Services.AddScoped<IMessageRepository, MessageRepository>();
 // InMemoryChatStore kept for backward compatibility with old API (v1)
 builder.Services.AddSingleton<InMemoryChatStore>();
-builder.Services.AddScoped<ChatWorkflowService>();
 builder.Services.AddScoped<ChatWorkflowServiceNew>();
 
 var app = builder.Build();

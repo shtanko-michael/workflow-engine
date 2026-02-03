@@ -1,11 +1,6 @@
 using Microsoft.AspNetCore.SignalR;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
-using WorkflowEngine.Core.Commands;
 using WorkflowEngine.Core.Execution;
-using WorkflowEngine.Core.Graph;
 using WorkflowEngine.Core.Persistence;
-using WorkflowEngine.Core.Registry;
 using WorkflowEngine.Core.State;
 using WorkflowEngine.Tests.UI.Backend.Data.Entities;
 using WorkflowEngine.Tests.UI.Backend.Data.Mappers;
@@ -18,32 +13,30 @@ namespace WorkflowEngine.Tests.UI.Backend.Services;
 
 public class ChatWorkflowServiceNew
 {
-    private readonly WorkflowRegistry _registry;
-    private readonly ICheckpointSaver _checkpointer;
+    private readonly WorkflowController _workflowController;
     private readonly ILogger<ChatWorkflowServiceNew> _logger;
     private readonly IConversationRepository _conversationRepo;
     private readonly IMessageRepository _messageRepo;
     private readonly IHubContext<ChatHub> _hub;
     private readonly IServiceScopeFactory _scopeFactory;
-    private readonly object _graphLock = new();
-    private readonly Dictionary<string, CompiledWorkflowGraph<ChatWorkflowState>> _graphs = new();
+    private readonly ICheckpointSaver _checkpointer;
 
     public ChatWorkflowServiceNew(
-        WorkflowRegistry registry,
-        ICheckpointSaver checkpointer,
+        WorkflowController workflowController,
         ILogger<ChatWorkflowServiceNew> logger,
         IConversationRepository conversationRepo,
         IMessageRepository messageRepo,
         IHubContext<ChatHub> hub,
-        IServiceScopeFactory scopeFactory)
+        IServiceScopeFactory scopeFactory,
+        ICheckpointSaver checkpointer)
     {
-        _registry = registry;
-        _checkpointer = checkpointer;
+        _workflowController = workflowController;
         _logger = logger;
         _conversationRepo = conversationRepo;
         _messageRepo = messageRepo;
         _hub = hub;
         _scopeFactory = scopeFactory;
+        _checkpointer = checkpointer;
     }
 
     public async Task<ConversationEntity> CreateDialogAsync(string workflowId, string? title)
@@ -415,20 +408,6 @@ public class ChatWorkflowServiceNew
         return savedMessages;
     }
 
-    private CompiledWorkflowGraph<ChatWorkflowState> GetGraph(string workflowId)
-    {
-        lock (_graphLock)
-        {
-            if (_graphs.TryGetValue(workflowId, out var cached))
-                return cached;
-
-            var workflowItem = _registry.Get(workflowId)
-                ?? throw new InvalidOperationException($"Workflow '{workflowId}' not registered.");
-            var graph = workflowItem.Compile<ChatWorkflowState>(_checkpointer, _logger);
-            _graphs[workflowId] = graph;
-            return graph;
-        }
-    }
 
     private async Task<ChatWorkflowState> RunWorkflowAsync(
         string threadId,
@@ -438,39 +417,19 @@ public class ChatWorkflowServiceNew
         string? checkpointNs,
         string? conversationId = null)
     {
-        var config = new WorkflowRunnableConfig
+        var executeConfig = new WorkflowControllerExecuteConfig
         {
-            Configurable = new Dictionary<string, object>
-            {
-                ["thread_id"] = threadId
-            },
-            Context = new WorkflowRunnableContext
-            {
-                Logger = _logger,
-                Tracking = new ClientTrackingContext
-                {
-                    ThreadId = threadId,
-                    WorkflowType = workflowId
-                }
-            }
+            WorkflowType = workflowId,
+            ThreadId = threadId,
+            ResumeMessage = resumeMessage,
+            CheckpointId = checkpointId,
+            CheckpointNs = checkpointNs,
+            StreamChunkCallback = !string.IsNullOrWhiteSpace(conversationId)
+                ? async (chunk) => await _hub.Clients.Group(conversationId).SendAsync("assistantChunk", conversationId, chunk)
+                : null
         };
 
-        if (!string.IsNullOrWhiteSpace(checkpointId))
-            config.Configurable["checkpoint_id"] = checkpointId;
-        if (!string.IsNullOrWhiteSpace(checkpointNs))
-            config.Configurable["checkpoint_ns"] = checkpointNs;
-        if (!string.IsNullOrWhiteSpace(conversationId))
-        {
-            var convId = conversationId;
-            config.Configurable["stream_chunk_callback"] = (Func<string, Task>)(async (chunk) =>
-            {
-                await _hub.Clients.Group(convId).SendAsync("assistantChunk", convId, chunk);
-            });
-        }
-
-        var command = WorkflowCommand<ChatWorkflowState>.Create(resume: resumeMessage);
-        var graph = GetGraph(workflowId);
-        return await graph.InvokeAsync(command, config);
+        return await _workflowController.ExecuteAsync<ChatWorkflowState>(executeConfig);
     }
 
     private static string? ResolveCheckpointNamespace(MessageEntity message)

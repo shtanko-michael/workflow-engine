@@ -1,7 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using WorkflowEngine.Core.Commands;
-using WorkflowEngine.Core.Graph;
 using WorkflowEngine.Core.Persistence;
 using WorkflowEngine.Core.Registry;
 using WorkflowEngine.Core.State;
@@ -40,7 +39,7 @@ public class WorkflowController
         if (workflowItem == null)
             throw new InvalidOperationException($"Workflow '{config.WorkflowType}' not found");
         
-        var checkpointer = await BuildCheckpointerAsync(config.CheckpointerConfig);
+        var checkpointer = await BuildCheckpointerAsync();
         var graph = workflowItem.Compile<TState>(checkpointer, _logger);
         
         var runnableConfig = BuildRunnableConfig(config);
@@ -56,36 +55,18 @@ public class WorkflowController
         return result;
     }
     
-    private Task<ICheckpointSaver> BuildCheckpointerAsync(CheckpointerConfig config)
+    private Task<ICheckpointSaver> BuildCheckpointerAsync()
     {
-        if (config == null)
-            throw new ArgumentNullException(nameof(config));
-        
-        //// For MVP, only Memory is supported directly
-        //// Postgres should be provided via DI
-        //if (config.Mode == CheckpointerMode.Memory)
-        //{
-        //    // Use reflection to create MemoryCheckpointSaver without direct reference
-        //    var assembly = System.Reflection.Assembly.Load("WorkflowEngine.Persistence.Memory");
-        //    var type = assembly.GetType("WorkflowEngine.Persistence.Memory.MemoryCheckpointSaver");
-        //    if (type != null)
-        //    {
-        //        var instance = Activator.CreateInstance(type);
-        //        return Task.FromResult((ICheckpointSaver)instance!);
-        //    }
-        //}
-        
-        // Try to get from DI
         var checkpointer = _serviceProvider.GetService<ICheckpointSaver>();
         if (checkpointer != null)
             return Task.FromResult(checkpointer);
             
-        throw new ArgumentException($"Checkpointer for mode {config.Mode} is not available. Register it via DI.");
+        throw new ArgumentException("Checkpointer is not available. Register it via DI.");
     }
     
     private WorkflowRunnableConfig BuildRunnableConfig(WorkflowControllerExecuteConfig config)
     {
-        return new WorkflowRunnableConfig
+        var runnableConfig = new WorkflowRunnableConfig
         {
             Configurable = new Dictionary<string, object>
             {
@@ -105,6 +86,16 @@ public class WorkflowController
                 Logger = _logger
             }
         };
+        
+        // Add optional checkpoint parameters
+        if (!string.IsNullOrWhiteSpace(config.CheckpointId))
+            runnableConfig.Configurable["checkpoint_id"] = config.CheckpointId;
+        if (!string.IsNullOrWhiteSpace(config.CheckpointNs))
+            runnableConfig.Configurable["checkpoint_ns"] = config.CheckpointNs;
+        if (config.StreamChunkCallback != null)
+            runnableConfig.Configurable["stream_chunk_callback"] = config.StreamChunkCallback;
+            
+        return runnableConfig;
     }
     
     private WorkflowCommand<TState> BuildInitialCommand<TState>(WorkflowControllerExecuteConfig config) where TState : class
@@ -128,33 +119,11 @@ public class WorkflowControllerExecuteConfig
     public string ThreadId { get; set; } = string.Empty;
     public string? UserId { get; set; }
     public string? WorkspaceId { get; set; }
-    public CheckpointerConfig CheckpointerConfig { get; set; } = null!;
     public object? InitialState { get; set; }
     public HumanMessage? ResumeMessage { get; set; }
-}
-
-/// <summary>
-/// Checkpointer configuration
-/// </summary>
-public class CheckpointerConfig
-{
-    public CheckpointerMode Mode { get; set; }
-    public PostgresCheckpointerConfig? PostgresConfig { get; set; }
-}
-
-/// <summary>
-/// Checkpointer mode
-/// </summary>
-public enum CheckpointerMode
-{
-    Memory,
-    Postgres
-}
-
-/// <summary>
-/// PostgreSQL checkpointer configuration
-/// </summary>
-public class PostgresCheckpointerConfig
-{
-    public string ConnectionString { get; set; } = string.Empty;
+    
+    // Additional checkpoint and streaming parameters
+    public string? CheckpointId { get; set; }
+    public string? CheckpointNs { get; set; }
+    public Func<string, Task>? StreamChunkCallback { get; set; }
 }
