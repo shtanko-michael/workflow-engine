@@ -59,6 +59,8 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
         if (config.Context == null)
             throw new ArgumentException("Context is required", nameof(config));
 
+        // store command in config for nodes to access
+        config.Configurable[WorkflowGlobals.WorkflowCommandKey] = command;
 
         var (state, resumeNode) = await GetOrCreateStateAsync(config, command);
         if (state.WorkflowCompleted)
@@ -126,7 +128,23 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
 
             // var interruptResumeNode = state.InterruptCaller ?? currentNode;
             state.InterruptRequestId = interruptEx.RequestId;
-            state.InterruptCaller = interruptEx.ReturnToNode;
+            state.InterruptCaller = interruptEx.Caller;
+            state.InterruptReason = WorkflowInterruptReason.AskHuman;
+            // save checkpoint at the node that interrupted the workflow basically AskHuman node
+            await SaveCheckpointAsync(config, state, WorkflowEdges.AskHuman);
+
+            // Return current state - workflow will resume later
+            return state;
+        }
+        catch (SubgraphWorkflowInterruptException interruptEx)
+        {
+            _logger?.LogInformation("Subgraph workflow interrupted: {Message}", interruptEx.Message);
+
+            // var interruptResumeNode = state.InterruptCaller ?? currentNode;
+            state.InterruptRequestId = interruptEx.RequestId;
+            state.InterruptCaller = interruptEx.Caller;
+            state.InterruptReason = WorkflowInterruptReason.AskHuman;
+            // save checkpoint at the subgraph node that interrupted the parent
             await SaveCheckpointAsync(config, state, state.InterruptCaller);
 
             // Return current state - workflow will resume later
@@ -164,25 +182,12 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
                     data: new { resumeNode, restoredType = restoredState.GetType().Name },
                     hypothesisId: "B");
                 #endregion
-                // Apply resume if it's a human message
-                if (command.Resume is HumanMessage restoredResumeMessage && restoredState is WorkflowStateBase restoredResumeBaseState)
-                {
-                    restoredResumeBaseState.Messages.Add(restoredResumeMessage);
-                }
-
                 return (restoredState, resumeNode);
             }
         }
 
         // Create new state
         var newState = command.Update ?? Activator.CreateInstance<TState>();
-
-        // Apply resume if it's a human message
-        if (command.Resume is HumanMessage newResumeMessage && newState is WorkflowStateBase newResumeBaseState)
-        {
-            newResumeBaseState.Messages.Add(newResumeMessage);
-        }
-
         return (newState, null);
     }
 

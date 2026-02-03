@@ -9,17 +9,19 @@ public class WorkflowCommand<TState> where TState : class
     /// Node name to go to
     /// </summary>
     public string? Goto { get; set; }
-    
+
     /// <summary>
     /// State update to apply
     /// </summary>
     public TState? Update { get; set; }
-    
+
     /// <summary>
     /// Resume data (HumanMessage or bool)
     /// </summary>
     public object? Resume { get; set; }
-    
+
+    public bool IsResume => Resume != null;
+
     /// <summary>
     /// Creates a new workflow command
     /// </summary>

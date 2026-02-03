@@ -58,6 +58,11 @@ public static class WithContextNode
                 // Re-throw interrupt exceptions
                 throw;
             }
+            catch (SubgraphWorkflowInterruptException)
+            {
+                // Re-throw interrupt exceptions
+                throw;
+            }
             catch (Exception ex)
             {
                 context.Logger.LogError(ex, "Error in node {NodeName}", name);

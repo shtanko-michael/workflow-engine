@@ -17,16 +17,18 @@ public static class AskHumanNode
     {
         return WithContextNode.Wrap<TState>("askHuman", (state, ctx, errorHandler, config) =>
         {
-            // If a human response already exists, return to the caller node
-            var resumeMessage = state.Messages.LastOrDefault();
-            if (resumeMessage is HumanMessage resumeHumanMessage
-            //&& resumeHumanMessage.RequestId == state.InterruptRequestId
+            var hasCommand = config.Configurable.TryGetValue(WorkflowGlobals.WorkflowCommandKey, out var command);
+            if (hasCommand
+                && command is WorkflowCommand<TState> workflowCommand
+                && workflowCommand.IsResume
             )
             {
                 var returnNode = state.InterruptCaller ?? WorkflowEdges.End;
                 state.InterruptRequestId = null;
                 state.InterruptCaller = null;
-                state.Messages.Add(resumeHumanMessage);
+                state.InterruptReason = null;
+                if (workflowCommand.Resume is HumanMessage msg)
+                    state.Messages.Add(msg);
 
                 return Task.FromResult(WorkflowCommand<TState>.Create(
                     gotoNode: returnNode,
@@ -36,7 +38,7 @@ public static class AskHumanNode
 
             var lastMessage = state.Messages.LastOrDefault();
             // Interrupt workflow - throw special exception
-            throw new WorkflowInterruptException(lastMessage?.Id, state.InterruptCaller ?? WorkflowEdges.End);
+            throw new WorkflowInterruptException(lastMessage?.Id ?? "", state.InterruptCaller ?? WorkflowEdges.End);
         });
     }
 }

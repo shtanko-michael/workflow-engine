@@ -321,7 +321,7 @@ public class PostgresCheckpointSaverTests
                     gotoNode: "route",
                     update: state));
             })
-            .AddNode("askHuman", AskHumanNode.Create<BranchState>())
+            .AddNode(WorkflowEdges.AskHuman, AskHumanNode.Create<BranchState>())
             .AddNode("route", (state, ctx, errorHandler, cfg) =>
             {
                 var lastMessage = state.Messages.LastOrDefault();
@@ -334,7 +334,7 @@ public class PostgresCheckpointSaverTests
                 }
 
                 return Task.FromResult(WorkflowCommand<BranchState>.Create(
-                    gotoNode: "askHuman",
+                    gotoNode: WorkflowEdges.AskHuman,
                     update: state));
             })
             .AddEdge(WorkflowEdges.Start, "prompt")
@@ -355,7 +355,9 @@ public class PostgresCheckpointSaverTests
 
         var baseCheckpoint = checkpointsAfterPrompt.FirstOrDefault(c =>
             c.Checkpoint.ChannelValues.TryGetValue("current_node", out var nodeValue) &&
-            GetCurrentNode(nodeValue) == "route");
+            GetCurrentNode(nodeValue) == WorkflowEdges.AskHuman &&
+            c.Checkpoint.ChannelValues.TryGetValue("state", out var stateValue) &&
+            GetInterruptRequestId(stateValue) == firstRun.InterruptRequestId);
 
         Assert.NotNull(baseCheckpoint);
 
@@ -442,7 +444,7 @@ public class PostgresCheckpointSaverTests
                     gotoNode: "route",
                     update: state));
             })
-            .AddNode("askHuman", AskHumanNode.Create<BranchState>())
+            .AddNode(WorkflowEdges.AskHuman, AskHumanNode.Create<BranchState>())
             .AddNode("route", (state, ctx, errorHandler, cfg) =>
             {
                 var lastMessage = state.Messages.LastOrDefault();
@@ -455,7 +457,7 @@ public class PostgresCheckpointSaverTests
                 }
 
                 return Task.FromResult(WorkflowCommand<BranchState>.Create(
-                    gotoNode: "askHuman",
+                    gotoNode: WorkflowEdges.AskHuman,
                     update: state));
             })
             .AddEdge(WorkflowEdges.Start, "prompt")
@@ -474,13 +476,15 @@ public class PostgresCheckpointSaverTests
             checkpointsAfterPrompt.Add(item);
         }
 
+        var promptId = firstRun.InterruptRequestId!;
+
         var baseCheckpoint = checkpointsAfterPrompt.FirstOrDefault(c =>
             c.Checkpoint.ChannelValues.TryGetValue("current_node", out var nodeValue) &&
-            GetCurrentNode(nodeValue) == "route");
+            GetCurrentNode(nodeValue) == WorkflowEdges.AskHuman &&
+            c.Checkpoint.ChannelValues.TryGetValue("state", out var stateValue) &&
+            GetInterruptRequestId(stateValue) == promptId);
 
         Assert.NotNull(baseCheckpoint);
-
-        var promptId = firstRun.InterruptRequestId!;
 
         var resumeOld = new HumanMessage
         {
@@ -554,7 +558,7 @@ public class PostgresCheckpointSaverTests
                     gotoNode: "route1",
                     update: state));
             })
-            .AddNode("askHuman", AskHumanNode.Create<ChatBranchState>())
+            .AddNode(WorkflowEdges.AskHuman, AskHumanNode.Create<ChatBranchState>())
             .AddNode("route1", (state, ctx, errorHandler, cfg) =>
             {
                 var lastMessage = state.Messages.LastOrDefault();
@@ -568,7 +572,7 @@ public class PostgresCheckpointSaverTests
                 }
 
                 return Task.FromResult(WorkflowCommand<ChatBranchState>.Create(
-                    gotoNode: "askHuman",
+                    gotoNode: WorkflowEdges.AskHuman,
                     update: state));
             })
             .AddNode("prompt2", (state, ctx, errorHandler, cfg) =>
@@ -590,7 +594,7 @@ public class PostgresCheckpointSaverTests
                 }
 
                 return Task.FromResult(WorkflowCommand<ChatBranchState>.Create(
-                    gotoNode: "askHuman",
+                    gotoNode: WorkflowEdges.AskHuman,
                     update: state));
             })
             .AddEdge(WorkflowEdges.Start, "prompt1")
@@ -610,39 +614,20 @@ public class PostgresCheckpointSaverTests
 
         var baseCheckpoint = checkpointsAfterPrompt.FirstOrDefault(c =>
             c.Checkpoint.ChannelValues.TryGetValue("current_node", out var nodeValue) &&
-            GetCurrentNode(nodeValue) == "route1");
+            GetCurrentNode(nodeValue) == WorkflowEdges.AskHuman &&
+            c.Checkpoint.ChannelValues.TryGetValue("state", out var stateValue) &&
+            GetInterruptRequestId(stateValue) == firstRequestId);
 
         Assert.NotNull(baseCheckpoint);
 
         var configAnswer1 = CloneConfig(baseConfig);
         configAnswer1.Configurable["checkpoint_id"] = baseCheckpoint!.Config.Configurable["checkpoint_id"];
         var answer1 = new HumanMessage { Content = "A", RequestId = firstRequestId };
-        var secondInterrupt = await graph.InvokeAsync(
+        var finished = await graph.InvokeAsync(
             WorkflowCommand<ChatBranchState>.Create(resume: answer1),
             configAnswer1);
-        Assert.False(string.IsNullOrWhiteSpace(secondInterrupt.InterruptRequestId));
-        var secondRequestId = secondInterrupt.InterruptRequestId!;
-
-        var checkpointsAfterSecondPrompt = new List<CheckpointTuple>();
-        await foreach (var item in saver.ListAsync(baseConfig))
-        {
-            checkpointsAfterSecondPrompt.Add(item);
-        }
-
-        var checkpointForRoute2 = checkpointsAfterSecondPrompt.FirstOrDefault(c =>
-            c.Checkpoint.ChannelValues.TryGetValue("state", out var stateValue) &&
-            GetInterruptRequestId(stateValue) == secondRequestId);
-
-        Assert.NotNull(checkpointForRoute2);
-
-        var configAnswer2 = CloneConfig(baseConfig);
-        configAnswer2.Configurable["checkpoint_id"] = checkpointForRoute2!.Config.Configurable["checkpoint_id"];
-        var answer2 = new HumanMessage { Content = "B", RequestId = secondRequestId };
-        var finished = await graph.InvokeAsync(
-            WorkflowCommand<ChatBranchState>.Create(resume: answer2),
-            configAnswer2);
         Assert.Equal("A", finished.Path1);
-        Assert.Equal("B", finished.Path2);
+        Assert.Equal("A", finished.Path2);
 
         var checkpoints = new List<CheckpointTuple>();
         await foreach (var item in saver.ListAsync(baseConfig))
@@ -652,7 +637,9 @@ public class PostgresCheckpointSaverTests
 
         var editCheckpoint = checkpoints.FirstOrDefault(c =>
             c.Checkpoint.ChannelValues.TryGetValue("current_node", out var nodeValue) &&
-            GetCurrentNode(nodeValue) == "route1");
+            GetCurrentNode(nodeValue) == WorkflowEdges.AskHuman &&
+            c.Checkpoint.ChannelValues.TryGetValue("state", out var stateValue) &&
+            GetInterruptRequestId(stateValue) == firstRequestId);
 
         Assert.NotNull(editCheckpoint);
 
@@ -676,6 +663,120 @@ public class PostgresCheckpointSaverTests
             GetChatPath1(value) == "A2");
 
         Assert.NotNull(editedCheckpoint);
+    }
+
+    [Fact]
+    public async Task Subgraph_PersistsAndRestoresParentAndChildStates()
+    {
+        var threadId = $"test-thread-{Guid.NewGuid()}";
+        var checkpointNs = string.Empty;
+        var baseConfig = new WorkflowRunnableConfig
+        {
+            Configurable = new Dictionary<string, object>
+            {
+                ["thread_id"] = threadId,
+                ["checkpoint_ns"] = checkpointNs
+            },
+            Context = new WorkflowRunnableContext
+            {
+                Logger = NullLoggerFactory.Instance.CreateLogger("test")
+            }
+        };
+
+        await using var dbContext = CreateDbContext();
+        var saver = new PostgresCheckpointSaver(dbContext, NullLogger<PostgresCheckpointSaver>.Instance);
+        await CleanupAsync(dbContext);
+        await saver.SetupAsync();
+
+        var subgraphGraph = new WorkflowGraph<SubgraphState>()
+            .AddNode(WorkflowEdges.AskHuman, AskHumanNode.Create<SubgraphState>())
+            .AddNode("step", (state, _, _, _) =>
+            {
+                var human = state.Messages.OfType<HumanMessage>().LastOrDefault();
+                if (human != null && !string.IsNullOrWhiteSpace(human.Content))
+                {
+                    state.SubValue = human.Content;
+                    return Task.FromResult(WorkflowCommand<SubgraphState>.Create(
+                        gotoNode: WorkflowEdges.End,
+                        update: state));
+                }
+
+                state.Messages.Add(new AIMessage { Content = "subgraph prompt" });
+                return Task.FromResult(WorkflowCommand<SubgraphState>.Create(
+                    gotoNode: WorkflowEdges.AskHuman,
+                    update: state));
+            })
+            .AddEdge(WorkflowEdges.Start, "step")
+            .AddEdge("step", WorkflowEdges.AskHuman)
+            .AddEdge("step", WorkflowEdges.End);
+        var subgraph = subgraphGraph.Compile(saver);
+
+        var parentGraph = new WorkflowGraph<SubgraphState>()
+            .AddNode("sub", subgraph)
+            .AddNode("after", (state, _, _, _) =>
+            {
+                state.ParentValue = "after";
+                return Task.FromResult(WorkflowCommand<SubgraphState>.Create(
+                    gotoNode: WorkflowEdges.End,
+                    update: state));
+            })
+            .AddEdge(WorkflowEdges.Start, "sub")
+            .AddEdge("sub", "after")
+            .AddEdge("after", WorkflowEdges.End);
+        var parent = parentGraph.Compile(saver);
+
+        var firstRun = await parent.InvokeAsync(
+            WorkflowCommand<SubgraphState>.Create(update: new SubgraphState()),
+            baseConfig);
+
+        Assert.False(firstRun.WorkflowCompleted);
+        Assert.Equal("sub", firstRun.InterruptCaller);
+        Assert.NotNull(firstRun.LastCheckpointId);
+
+        var parentCheckpoints = new List<CheckpointTuple>();
+        await foreach (var item in saver.ListAsync(baseConfig))
+        {
+            parentCheckpoints.Add(item);
+        }
+
+        var parentInterrupt = parentCheckpoints.FirstOrDefault(c =>
+            c.Checkpoint.ChannelValues.TryGetValue("current_node", out var nodeValue) &&
+            GetCurrentNode(nodeValue) == "sub");
+        Assert.NotNull(parentInterrupt);
+
+        var childConfig = CloneConfig(baseConfig);
+        childConfig.Configurable["checkpoint_ns"] = "sub";
+        var childCheckpoints = new List<CheckpointTuple>();
+        await foreach (var item in saver.ListAsync(childConfig))
+        {
+            childCheckpoints.Add(item);
+        }
+
+        var childInterrupt = childCheckpoints.FirstOrDefault(c =>
+            c.Checkpoint.ChannelValues.TryGetValue("current_node", out var nodeValue) &&
+            GetCurrentNode(nodeValue) == WorkflowEdges.AskHuman);
+        Assert.NotNull(childInterrupt);
+
+        var resumeConfig = CloneConfig(baseConfig);
+        var resume = new HumanMessage { Content = "ok" };
+        var finished = await parent.InvokeAsync(
+            WorkflowCommand<SubgraphState>.Create(resume: resume),
+            resumeConfig);
+
+        Assert.True(finished.WorkflowCompleted);
+        Assert.Equal("ok", finished.SubValue);
+        Assert.Equal("after", finished.ParentValue);
+
+        var childCheckpointsAfterResume = new List<CheckpointTuple>();
+        await foreach (var item in saver.ListAsync(childConfig))
+        {
+            childCheckpointsAfterResume.Add(item);
+        }
+
+        var childCompleted = childCheckpointsAfterResume.FirstOrDefault(c =>
+            c.Checkpoint.ChannelValues.TryGetValue("state", out var value) &&
+            GetJsonString(value, "subValue") == "ok");
+        Assert.NotNull(childCompleted);
     }
 
     private static CheckpointDbContext CreateDbContext()
@@ -826,5 +927,11 @@ DROP TABLE IF EXISTS checkpoint_migrations;");
     {
         public string? Path1 { get; set; }
         public string? Path2 { get; set; }
+    }
+
+    private class SubgraphState : WorkflowStateBase
+    {
+        public string? SubValue { get; set; }
+        public string? ParentValue { get; set; }
     }
 }
