@@ -12,10 +12,10 @@ namespace WorkflowEngine.Tests.UI.Backend.Workflows.Onboarding;
 /// </summary>
 public static class SurveyStep
 {
-    public static async Task<WorkflowCommand<ChatWorkflowState>> Execute(
-        ChatWorkflowState state,
+    public static async Task<WorkflowCommand<OnboardingState>> Execute(
+        OnboardingState state,
         WorkflowRunnableContext context,
-        Func<Exception, WorkflowCommand<ChatWorkflowState>> errorHandler,
+        Func<Exception, WorkflowCommand<OnboardingState>> errorHandler,
         WorkflowRunnableConfig config,
         IServiceScopeFactory scopeFactory)
     {
@@ -55,15 +55,14 @@ public static class SurveyStep
             state.OnboardingJob = output.Job;
             state.OnboardingSphere = output.Sphere;
             state.OnboardingEmployees = output.Employees.Value;
-            return WorkflowCommand<ChatWorkflowState>.Create(
+            return WorkflowCommand<OnboardingState>.Create(
                 gotoNode: "thankYou",
                 update: state);
         }
 
         var questionToUser = output.QuestionToUser?.Trim() ?? "NO DATA";
         state.Messages.Add(new AIMessage { Content = questionToUser });
-        state.InterruptCaller = "survey";
-        return WorkflowCommand<ChatWorkflowState>.Create(
+        return WorkflowCommand<OnboardingState>.Create(
             gotoNode: WorkflowEdges.AskHuman,
             update: state);
     }

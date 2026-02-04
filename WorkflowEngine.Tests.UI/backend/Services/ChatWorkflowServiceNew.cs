@@ -8,6 +8,8 @@ using WorkflowEngine.Tests.UI.Backend.Data.Repositories;
 using WorkflowEngine.Tests.UI.Backend.Hubs;
 using WorkflowEngine.Tests.UI.Backend.Models;
 using WorkflowEngine.Tests.UI.Backend.Workflows;
+using WorkflowEngine.Tests.UI.Backend.Workflows.Onboarding;
+using WorkflowEngine.Tests.UI.Backend.Workflows.RoutedChat;
 
 namespace WorkflowEngine.Tests.UI.Backend.Services;
 
@@ -19,7 +21,7 @@ public class ChatWorkflowServiceNew
     private readonly IMessageRepository _messageRepo;
     private readonly IHubContext<ChatHub> _hub;
     private readonly IServiceScopeFactory _scopeFactory;
-    private readonly ICheckpointSaver _checkpointer;
+    private readonly ICheckpointSaverFactory _checkpointer;
 
     public ChatWorkflowServiceNew(
         WorkflowController workflowController,
@@ -28,7 +30,7 @@ public class ChatWorkflowServiceNew
         IMessageRepository messageRepo,
         IHubContext<ChatHub> hub,
         IServiceScopeFactory scopeFactory,
-        ICheckpointSaver checkpointer)
+        ICheckpointSaverFactory checkpointer)
     {
         _workflowController = workflowController;
         _logger = logger;
@@ -350,7 +352,7 @@ public class ChatWorkflowServiceNew
 
     private async Task<List<MessageEntity>> SaveMessagesFromStateAsync(
         string conversationId,
-        ChatWorkflowState state,
+        WorkflowStateBase state,
         string? parentMessageId,
         string? checkpointId = null,
         string? checkpointNs = null)
@@ -409,7 +411,7 @@ public class ChatWorkflowServiceNew
     }
 
 
-    private async Task<ChatWorkflowState> RunWorkflowAsync(
+    private async Task<WorkflowStateBase> RunWorkflowAsync(
         string threadId,
         string workflowId,
         HumanMessage? resumeMessage,
@@ -429,7 +431,14 @@ public class ChatWorkflowServiceNew
                 : null
         };
 
-        return await _workflowController.ExecuteAsync<ChatWorkflowState>(executeConfig);
+        return workflowId switch
+        {
+            DemoChatWorkflow.WorkflowId => await _workflowController.ExecuteAsync<DemoChatState>(executeConfig),
+            AIChatWorkflow.WorkflowId => await _workflowController.ExecuteAsync<AIChatState>(executeConfig),
+            OnboardingConstants.WorkflowId => await _workflowController.ExecuteAsync<OnboardingState>(executeConfig),
+            RoutedChatConstants.WorkflowId => await _workflowController.ExecuteAsync<RoutedChatState>(executeConfig),
+            _ => throw new InvalidOperationException($"Unsupported workflow type '{workflowId}'")
+        };
     }
 
     private static string? ResolveCheckpointNamespace(MessageEntity message)
@@ -456,7 +465,8 @@ public class ChatWorkflowServiceNew
                 ["checkpoint_id"] = checkpointId
             }
         };
-        var sourceCheckpoint = await _checkpointer.GetAsync(sourceConfig);
+        var c = await _checkpointer.Build();
+        var sourceCheckpoint = await c.GetAsync(sourceConfig);
         if (sourceCheckpoint?.Checkpoint == null)
             return;
 
@@ -468,7 +478,7 @@ public class ChatWorkflowServiceNew
                 ["checkpoint_ns"] = toCheckpointNs
             }
         };
-        await _checkpointer.PutAsync(
+        await c.PutAsync(
             targetConfig,
             sourceCheckpoint.Checkpoint,
             sourceCheckpoint.Metadata,

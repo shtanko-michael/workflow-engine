@@ -1,11 +1,12 @@
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Logging.Abstractions;
 using WorkflowEngine.Core.Commands;
 using WorkflowEngine.Core.Execution;
 using WorkflowEngine.Core.Graph;
@@ -37,10 +38,8 @@ public class PostgresCheckpointSaverTests
             }
         };
 
-        await using var dbContext = CreateDbContext();
-        var saver = new PostgresCheckpointSaver(dbContext, NullLogger<PostgresCheckpointSaver>.Instance);
-        await CleanupAsync(dbContext);
-        await saver.SetupAsync();
+        var saver = new PostgreCheckpointerSaverFactory();
+        var checkpointer = await saver.Build();
 
         var checkpoint = new Checkpoint
         {
@@ -59,8 +58,8 @@ public class PostgresCheckpointSaverTests
             }
         };
 
-        await saver.PutAsync(config, checkpoint, new { }, checkpoint.ChannelVersions);
-        var restored = await saver.GetAsync(config);
+        await checkpointer.PutAsync(config, checkpoint, new { }, checkpoint.ChannelVersions);
+        var restored = await checkpointer.GetAsync(config);
 
         Assert.NotNull(restored);
         Assert.True(restored!.Checkpoint.ChannelValues.ContainsKey("flag"));
@@ -90,10 +89,8 @@ public class PostgresCheckpointSaverTests
             }
         };
 
-        await using var dbContext = CreateDbContext();
-        var saver = new PostgresCheckpointSaver(dbContext, NullLogger<PostgresCheckpointSaver>.Instance);
-        await CleanupAsync(dbContext);
-        await saver.SetupAsync();
+        var saver = new PostgreCheckpointerSaverFactory();
+        var checkpointer = await saver.Build();
 
         var graph = new WorkflowGraph<BranchState>()
             .AddNode("start", (state, ctx, errorHandler, cfg) =>
@@ -132,7 +129,7 @@ public class PostgresCheckpointSaverTests
         await graph.InvokeAsync(WorkflowCommand<BranchState>.Create(update: stateA), configAStart);
 
         var checkpointsAfterA = new List<CheckpointTuple>();
-        await foreach (var item in saver.ListAsync(baseConfig))
+        await foreach (var item in checkpointer.ListAsync(baseConfig))
         {
             checkpointsAfterA.Add(item);
         }
@@ -149,7 +146,7 @@ public class PostgresCheckpointSaverTests
         await graph.InvokeAsync(WorkflowCommand<BranchState>.Create(), configBStart);
 
         var checkpoints = new List<CheckpointTuple>();
-        await foreach (var item in saver.ListAsync(baseConfig))
+        await foreach (var item in checkpointer.ListAsync(baseConfig))
         {
             checkpoints.Add(item);
         }
@@ -195,10 +192,7 @@ public class PostgresCheckpointSaverTests
             }
         };
 
-        await using var dbContext = CreateDbContext();
-        var saver = new PostgresCheckpointSaver(dbContext, NullLogger<PostgresCheckpointSaver>.Instance);
-        await CleanupAsync(dbContext);
-        await saver.SetupAsync();
+        var saver = new PostgreCheckpointerSaverFactory();
 
         var graph = new WorkflowGraph<BranchState>()
             .AddNode("start", (state, ctx, errorHandler, cfg) =>
@@ -241,8 +235,9 @@ public class PostgresCheckpointSaverTests
 
         await graph.InvokeAsync(WorkflowCommand<BranchState>.Create(update: stateA), baseConfig);
 
+        var checkpointer = await saver.Build();
         var checkpointsAfterA = new List<CheckpointTuple>();
-        await foreach (var item in saver.ListAsync(baseConfig))
+        await foreach (var item in checkpointer.ListAsync(baseConfig))
         {
             checkpointsAfterA.Add(item);
         }
@@ -262,7 +257,7 @@ public class PostgresCheckpointSaverTests
         Assert.Equal("B", resultB.Path ?? resultB.BranchChoice);
 
         var checkpoints = new List<CheckpointTuple>();
-        await foreach (var item in saver.ListAsync(baseConfig))
+        await foreach (var item in checkpointer.ListAsync(baseConfig))
         {
             checkpoints.Add(item);
         }
@@ -308,10 +303,7 @@ public class PostgresCheckpointSaverTests
             }
         };
 
-        await using var dbContext = CreateDbContext();
-        var saver = new PostgresCheckpointSaver(dbContext, NullLogger<PostgresCheckpointSaver>.Instance);
-        await CleanupAsync(dbContext);
-        await saver.SetupAsync();
+        var saver = new PostgreCheckpointerSaverFactory();
 
         var graph = new WorkflowGraph<BranchState>()
             .AddNode("prompt", (state, ctx, errorHandler, cfg) =>
@@ -347,8 +339,9 @@ public class PostgresCheckpointSaverTests
 
         Assert.False(string.IsNullOrWhiteSpace(firstRun.InterruptRequestId));
 
+        var checkpointer = await saver.Build();
         var checkpointsAfterPrompt = new List<CheckpointTuple>();
-        await foreach (var item in saver.ListAsync(baseConfig))
+        await foreach (var item in checkpointer.ListAsync(baseConfig))
         {
             checkpointsAfterPrompt.Add(item);
         }
@@ -386,7 +379,7 @@ public class PostgresCheckpointSaverTests
         Assert.Equal("B", resultB.Path);
 
         var checkpoints = new List<CheckpointTuple>();
-        await foreach (var item in saver.ListAsync(baseConfig))
+        await foreach (var item in checkpointer.ListAsync(baseConfig))
         {
             checkpoints.Add(item);
         }
@@ -430,10 +423,7 @@ public class PostgresCheckpointSaverTests
             }
         };
 
-        await using var dbContext = CreateDbContext();
-        var saver = new PostgresCheckpointSaver(dbContext, NullLogger<PostgresCheckpointSaver>.Instance);
-        await CleanupAsync(dbContext);
-        await saver.SetupAsync();
+        var saver = new PostgreCheckpointerSaverFactory();
 
         var graph = new WorkflowGraph<BranchState>()
             .AddNode("prompt", (state, ctx, errorHandler, cfg) =>
@@ -470,8 +460,9 @@ public class PostgresCheckpointSaverTests
 
         Assert.False(string.IsNullOrWhiteSpace(firstRun.InterruptRequestId));
 
+        var checkpointer = await saver.Build();
         var checkpointsAfterPrompt = new List<CheckpointTuple>();
-        await foreach (var item in saver.ListAsync(baseConfig))
+        await foreach (var item in checkpointer.ListAsync(baseConfig))
         {
             checkpointsAfterPrompt.Add(item);
         }
@@ -511,7 +502,7 @@ public class PostgresCheckpointSaverTests
         Assert.Equal("B", resultB.Path);
 
         var checkpoints = new List<CheckpointTuple>();
-        await foreach (var item in saver.ListAsync(baseConfig))
+        await foreach (var item in checkpointer.ListAsync(baseConfig))
         {
             checkpoints.Add(item);
         }
@@ -545,10 +536,7 @@ public class PostgresCheckpointSaverTests
             }
         };
 
-        await using var dbContext = CreateDbContext();
-        var saver = new PostgresCheckpointSaver(dbContext, NullLogger<PostgresCheckpointSaver>.Instance);
-        await CleanupAsync(dbContext);
-        await saver.SetupAsync();
+        var saver = new PostgreCheckpointerSaverFactory();
 
         var graph = new WorkflowGraph<ChatBranchState>()
             .AddNode("prompt1", (state, ctx, errorHandler, cfg) =>
@@ -605,9 +593,9 @@ public class PostgresCheckpointSaverTests
             baseConfig);
         Assert.False(string.IsNullOrWhiteSpace(firstInterrupt.InterruptRequestId));
         var firstRequestId = firstInterrupt.InterruptRequestId!;
-
+        var checkpointer = await saver.Build();
         var checkpointsAfterPrompt = new List<CheckpointTuple>();
-        await foreach (var item in saver.ListAsync(baseConfig))
+        await foreach (var item in checkpointer.ListAsync(baseConfig))
         {
             checkpointsAfterPrompt.Add(item);
         }
@@ -623,14 +611,15 @@ public class PostgresCheckpointSaverTests
         var configAnswer1 = CloneConfig(baseConfig);
         configAnswer1.Configurable["checkpoint_id"] = baseCheckpoint!.Config.Configurable["checkpoint_id"];
         var answer1 = new HumanMessage { Content = "A", RequestId = firstRequestId };
-        var finished = await graph.InvokeAsync(
+        var secondInterrupt = await graph.InvokeAsync(
             WorkflowCommand<ChatBranchState>.Create(resume: answer1),
             configAnswer1);
-        Assert.Equal("A", finished.Path1);
-        Assert.Equal("A", finished.Path2);
+        Assert.Equal("A", secondInterrupt.Path1);
+        Assert.Null(secondInterrupt.Path2);
+        Assert.False(string.IsNullOrWhiteSpace(secondInterrupt.InterruptRequestId));
 
         var checkpoints = new List<CheckpointTuple>();
-        await foreach (var item in saver.ListAsync(baseConfig))
+        await foreach (var item in checkpointer.ListAsync(baseConfig))
         {
             checkpoints.Add(item);
         }
@@ -651,9 +640,11 @@ public class PostgresCheckpointSaverTests
             configEdit);
 
         Assert.Equal("A2", editedState.Path1);
+        Assert.Null(editedState.Path2);
+        Assert.False(string.IsNullOrWhiteSpace(editedState.InterruptRequestId));
 
         var checkpointsAfterEdit = new List<CheckpointTuple>();
-        await foreach (var item in saver.ListAsync(baseConfig))
+        await foreach (var item in checkpointer.ListAsync(baseConfig))
         {
             checkpointsAfterEdit.Add(item);
         }
@@ -683,10 +674,7 @@ public class PostgresCheckpointSaverTests
             }
         };
 
-        await using var dbContext = CreateDbContext();
-        var saver = new PostgresCheckpointSaver(dbContext, NullLogger<PostgresCheckpointSaver>.Instance);
-        await CleanupAsync(dbContext);
-        await saver.SetupAsync();
+        var saver = new PostgreCheckpointerSaverFactory();
 
         var subgraphGraph = new WorkflowGraph<SubgraphState>()
             .AddNode(WorkflowEdges.AskHuman, AskHumanNode.Create<SubgraphState>())
@@ -733,8 +721,9 @@ public class PostgresCheckpointSaverTests
         Assert.Equal("sub", firstRun.InterruptCaller);
         Assert.NotNull(firstRun.LastCheckpointId);
 
+        var checkpointer = await saver.Build();
         var parentCheckpoints = new List<CheckpointTuple>();
-        await foreach (var item in saver.ListAsync(baseConfig))
+        await foreach (var item in checkpointer.ListAsync(baseConfig))
         {
             parentCheckpoints.Add(item);
         }
@@ -747,7 +736,7 @@ public class PostgresCheckpointSaverTests
         var childConfig = CloneConfig(baseConfig);
         childConfig.Configurable["checkpoint_ns"] = "sub";
         var childCheckpoints = new List<CheckpointTuple>();
-        await foreach (var item in saver.ListAsync(childConfig))
+        await foreach (var item in checkpointer.ListAsync(childConfig))
         {
             childCheckpoints.Add(item);
         }
@@ -768,7 +757,7 @@ public class PostgresCheckpointSaverTests
         Assert.Equal("after", finished.ParentValue);
 
         var childCheckpointsAfterResume = new List<CheckpointTuple>();
-        await foreach (var item in saver.ListAsync(childConfig))
+        await foreach (var item in checkpointer.ListAsync(childConfig))
         {
             childCheckpointsAfterResume.Add(item);
         }
@@ -933,5 +922,28 @@ DROP TABLE IF EXISTS checkpoint_migrations;");
     {
         public string? SubValue { get; set; }
         public string? ParentValue { get; set; }
+    }
+
+    public class PostgreCheckpointerSaverFactory : ICheckpointSaverFactory
+    {
+        public PostgreCheckpointerSaverFactory(bool cleanup = true)
+        {
+            if (cleanup)
+                CleanUp().Wait();
+        }
+
+        public async Task<ICheckpointSaver> Build()
+        {
+            var dbContext = CreateDbContext();
+            var saver = new PostgresCheckpointSaver(dbContext, NullLogger<PostgresCheckpointSaver>.Instance);
+            await saver.SetupAsync();
+            return saver;
+        }
+
+        public async Task CleanUp()
+        {
+            using var dbContext = CreateDbContext();
+            await CleanupAsync(dbContext);
+        }
     }
 }

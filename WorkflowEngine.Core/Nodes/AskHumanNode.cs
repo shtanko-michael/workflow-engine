@@ -23,12 +23,15 @@ public static class AskHumanNode
                 && workflowCommand.IsResume
             )
             {
+                // Consume the resume payload so it is not reused in subsequent AskHuman nodes.
+                var resumeMessage = workflowCommand.Resume as HumanMessage;
+                workflowCommand.Resume = null;
                 var returnNode = state.InterruptCaller ?? WorkflowEdges.End;
                 state.InterruptRequestId = null;
                 state.InterruptCaller = null;
                 state.InterruptReason = null;
-                if (workflowCommand.Resume is HumanMessage msg)
-                    state.Messages.Add(msg);
+                if (resumeMessage != null)
+                    state.Messages.Add(resumeMessage);
 
                 return Task.FromResult(WorkflowCommand<TState>.Create(
                     gotoNode: returnNode,

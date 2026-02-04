@@ -59,11 +59,21 @@ public class SubgraphTests
         public int SubCounter { get; set; }
     }
 
+    public class MemoryCheckpointSaveFactory : ICheckpointSaverFactory
+    {
+        private readonly MemoryCheckpointSaver _saver = new MemoryCheckpointSaver();
+
+        public async Task<ICheckpointSaver> Build()
+        {
+            await _saver.SetupAsync();
+            return _saver;
+        }
+    }
+
     [Fact]
     public async Task SubgraphAsNode_WhenSubgraphCompletes_ParentReceivesStateAndContinues()
     {
-        var checkpointer = new MemoryCheckpointSaver();
-        await checkpointer.SetupAsync();
+        var checkpointer = new MemoryCheckpointSaveFactory();
 
         // Subgraph: single node that appends "subgraph" and goes to end
         var subgraphGraph = new WorkflowGraph<TestState>()
@@ -107,8 +117,7 @@ public class SubgraphTests
     [Fact]
     public async Task SubgraphAsNode_WhenSubgraphInterrupts_ParentSavesAtSubgraphNode()
     {
-        var checkpointer = new MemoryCheckpointSaver();
-        await checkpointer.SetupAsync();
+        var checkpointer = new MemoryCheckpointSaveFactory();
 
         // Subgraph: goes to askHuman (will interrupt)
         var subgraphGraph = new WorkflowGraph<TestState>()
@@ -150,8 +159,7 @@ public class SubgraphTests
     [Fact]
     public async Task SubgraphAsNode_WhenResumedWithHumanMessage_SubgraphContinuesThenParentContinues()
     {
-        var checkpointer = new MemoryCheckpointSaver();
-        await checkpointer.SetupAsync();
+        var checkpointer = new MemoryCheckpointSaveFactory();
 
         var subgraphGraph = new WorkflowGraph<TestState>()
             .AddNode(WorkflowEdges.AskHuman, AskHumanNode.Create<TestState>())
@@ -216,8 +224,7 @@ public class SubgraphTests
     [Fact]
     public async Task SubgraphAsNode_WithDifferentStateTypes_MapsAndMergesOnCompletion()
     {
-        var checkpointer = new MemoryCheckpointSaver();
-        await checkpointer.SetupAsync();
+        var checkpointer = new MemoryCheckpointSaveFactory();
 
         var subgraphGraph = new WorkflowGraph<SubState>()
             .AddNode("inner", (state, _, _, _) =>
@@ -276,8 +283,7 @@ public class SubgraphTests
     [Fact]
     public async Task SubgraphAsNode_WithDifferentStateTypes_InterruptAndResume_MergesCorrectly()
     {
-        var checkpointer = new MemoryCheckpointSaver();
-        await checkpointer.SetupAsync();
+        var checkpointer = new MemoryCheckpointSaveFactory();
 
         var subgraphGraph = new WorkflowGraph<SubState>()
             .AddNode(WorkflowEdges.AskHuman, AskHumanNode.Create<SubState>())

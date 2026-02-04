@@ -1,14 +1,12 @@
 using WorkflowEngine.Core.State;
 
-namespace WorkflowEngine.Tests.UI.Backend.Workflows;
+namespace WorkflowEngine.Tests.UI.Backend.Workflows.Onboarding;
 
 /// <summary>
-/// Shared state for chat workflows (Demo, AI, Onboarding).
+/// State for onboarding workflow.
 /// </summary>
-public class ChatWorkflowState : WorkflowStateBase
+public class OnboardingState : WorkflowStateBase
 {
-    public string? LastUserMessage { get; set; }
-
     /// <summary>Collected during onboarding survey (job title/role).</summary>
     public string? OnboardingJob { get; set; }
 

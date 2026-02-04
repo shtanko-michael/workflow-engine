@@ -76,10 +76,10 @@ public class WorkflowRegistryItem
     /// <summary>
     /// Compiles the workflow graph with a checkpointer
     /// </summary>
-    public CompiledWorkflowGraph<TState> Compile<TState>(ICheckpointSaver checkpointer, ILogger? logger = null) where TState : WorkflowStateBase
+    public CompiledWorkflowGraph<TState> Compile<TState>(ICheckpointSaverFactory checkpointerFactory, ILogger? logger = null) where TState : WorkflowStateBase
     {
-        if (checkpointer == null)
-            throw new ArgumentNullException(nameof(checkpointer));
+        if (checkpointerFactory == null)
+            throw new ArgumentNullException(nameof(checkpointerFactory));
             
         if (typeof(TState) != _stateType)
         {
@@ -100,7 +100,7 @@ public class WorkflowRegistryItem
         if (compileMethod == null)
             throw new InvalidOperationException("Compile method not found");
             
-        var compiledGraph = compileMethod.Invoke(workflow, new object[] { checkpointer, logger });
+        var compiledGraph = compileMethod.Invoke(workflow, new object[] { checkpointerFactory, logger });
         if (compiledGraph == null)
             throw new InvalidOperationException("Failed to compile workflow graph");
             

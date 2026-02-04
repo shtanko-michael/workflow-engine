@@ -10,6 +10,7 @@ using WorkflowEngine.Tests.UI.Backend.LLM;
 using WorkflowEngine.Tests.UI.Backend.Services;
 using WorkflowEngine.Tests.UI.Backend.Workflows;
 using WorkflowEngine.Tests.UI.Backend.Workflows.Onboarding;
+using WorkflowEngine.Tests.UI.Backend.Workflows.RoutedChat;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -66,6 +67,7 @@ using (var scope = app.Services.CreateScope())
     var scopeFactory = scope.ServiceProvider.GetRequiredService<IServiceScopeFactory>();
     registry.Register(AIChatWorkflow.Build(scopeFactory));
     registry.Register(OnboardingWorkflow.Build(scopeFactory));
+    registry.Register(RoutedChatWorkflow.Build(scopeFactory));
 }
 
 app.UseCors("ui");

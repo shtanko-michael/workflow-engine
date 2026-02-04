@@ -151,7 +151,7 @@ public class WorkflowGraph<TState> where TState : WorkflowStateBase
     /// <summary>
     /// Compiles the graph with a checkpointer
     /// </summary>
-    public CompiledWorkflowGraph<TState> Compile(ICheckpointSaver checkpointer, ILogger? logger = null)
+    public CompiledWorkflowGraph<TState> Compile(ICheckpointSaverFactory checkpointer, ILogger? logger = null)
     {
         if (checkpointer == null)
             throw new ArgumentNullException(nameof(checkpointer));

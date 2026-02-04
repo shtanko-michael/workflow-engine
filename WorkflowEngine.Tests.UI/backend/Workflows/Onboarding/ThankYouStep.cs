@@ -12,10 +12,10 @@ namespace WorkflowEngine.Tests.UI.Backend.Workflows.Onboarding;
 /// </summary>
 public static class ThankYouStep
 {
-    public static async Task<WorkflowCommand<ChatWorkflowState>> Execute(
-        ChatWorkflowState state,
+    public static async Task<WorkflowCommand<OnboardingState>> Execute(
+        OnboardingState state,
         WorkflowRunnableContext context,
-        Func<Exception, WorkflowCommand<ChatWorkflowState>> errorHandler,
+        Func<Exception, WorkflowCommand<OnboardingState>> errorHandler,
         WorkflowRunnableConfig config,
         IServiceScopeFactory scopeFactory)
     {
@@ -39,7 +39,7 @@ public static class ThankYouStep
 
         state.Messages.Add(new AIMessage { Content = response.Content ?? "" });
 
-        return WorkflowCommand<ChatWorkflowState>.Create(
+        return WorkflowCommand<OnboardingState>.Create(
             gotoNode: WorkflowEdges.End,
             update: state);
     }

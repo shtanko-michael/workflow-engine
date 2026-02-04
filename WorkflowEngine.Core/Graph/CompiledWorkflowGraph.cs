@@ -21,7 +21,7 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
     private readonly Dictionary<string, WorkflowNode<TState>> _nodes;
     private readonly List<WorkflowEdge> _edges;
     private readonly Dictionary<string, List<string>> _nodeEnds;
-    private readonly ICheckpointSaver _checkpointer;
+    private readonly ICheckpointSaverFactory _checkpointerFactory;
     private readonly ILogger? _logger;
     private readonly JsonSerializerOptions _jsonOptions;
 
@@ -29,13 +29,13 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
         Dictionary<string, WorkflowNode<TState>> nodes,
         List<WorkflowEdge> edges,
         Dictionary<string, List<string>> nodeEnds,
-        ICheckpointSaver checkpointer,
+        ICheckpointSaverFactory checkpointerFactory,
         ILogger? logger = null)
     {
         _nodes = nodes ?? throw new ArgumentNullException(nameof(nodes));
         _edges = edges ?? throw new ArgumentNullException(nameof(edges));
         _nodeEnds = nodeEnds ?? throw new ArgumentNullException(nameof(nodeEnds));
-        _checkpointer = checkpointer ?? throw new ArgumentNullException(nameof(checkpointer));
+        _checkpointerFactory = checkpointerFactory ?? throw new ArgumentNullException(nameof(_checkpointerFactory));
         _logger = logger;
         _jsonOptions = new JsonSerializerOptions
         {
@@ -159,7 +159,8 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
         WorkflowRunnableConfig config,
         WorkflowCommand<TState> command)
     {
-        var checkpoint = await _checkpointer.GetAsync(config);
+        var checkpointer = await _checkpointerFactory.Build();
+        var checkpoint = await checkpointer.GetAsync(config);
         #region agent log
         DebugLog(
             location: "CompiledWorkflowGraph.GetOrCreateStateAsync",
@@ -250,7 +251,8 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
             baseState.LastCheckpointId = checkpoint.Id;
         }
 
-        await _checkpointer.PutAsync(config, checkpoint, new { }, newVersions);
+        var checkpointer = await _checkpointerFactory.Build();
+        await checkpointer.PutAsync(config, checkpoint, new { }, newVersions);
         #region agent log
         DebugLog(
             location: "CompiledWorkflowGraph.SaveCheckpointAsync",
@@ -364,7 +366,8 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
     /// </summary>
     public async Task<CheckpointTuple?> GetCheckpointAsync(WorkflowRunnableConfig config)
     {
-        return await _checkpointer.GetAsync(config);
+        var checkpointer = await _checkpointerFactory.Build();
+        return await checkpointer.GetAsync(config);
     }
 
     private static void DebugLog(string location, string message, object data, string hypothesisId, string runId = "run1")

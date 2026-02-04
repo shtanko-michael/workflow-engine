@@ -40,6 +40,7 @@ public class WorkflowController
             throw new InvalidOperationException($"Workflow '{config.WorkflowType}' not found");
         
         var checkpointer = await BuildCheckpointerAsync();
+
         var graph = workflowItem.Compile<TState>(checkpointer, _logger);
         
         var runnableConfig = BuildRunnableConfig(config);
@@ -55,9 +56,9 @@ public class WorkflowController
         return result;
     }
     
-    private Task<ICheckpointSaver> BuildCheckpointerAsync()
+    private Task<ICheckpointSaverFactory> BuildCheckpointerAsync()
     {
-        var checkpointer = _serviceProvider.GetService<ICheckpointSaver>();
+        var checkpointer = _serviceProvider.GetService<ICheckpointSaverFactory>();
         if (checkpointer != null)
             return Task.FromResult(checkpointer);
             

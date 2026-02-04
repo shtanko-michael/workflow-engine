@@ -12,9 +12,9 @@ public static class AIChatWorkflow
 {
     public const string WorkflowId = "ai_chat";
 
-    public static WorkflowDeclaration<ChatWorkflowState> Build(IServiceScopeFactory scopeFactory)
+    public static WorkflowDeclaration<AIChatState> Build(IServiceScopeFactory scopeFactory)
     {
-        var workflow = new WorkflowGraph<ChatWorkflowState>()
+        var workflow = new WorkflowGraph<AIChatState>()
             .AddNode("start", (state, ctx, errorHandler, cfg) =>
             {
                 state.Messages.Add(new AIMessage
@@ -22,7 +22,7 @@ public static class AIChatWorkflow
                     Content = "Hello! I'm an AI assistant. Ask me anything or type \"bye\" to finish."
                 });
                 state.InterruptCaller = "handleInput";
-                return Task.FromResult(WorkflowCommand<ChatWorkflowState>.Create(
+                return Task.FromResult(WorkflowCommand<AIChatState>.Create(
                     gotoNode: WorkflowEdges.AskHuman,
                     update: state));
             })
@@ -35,7 +35,7 @@ public static class AIChatWorkflow
                 if (string.Equals(content, "bye", StringComparison.OrdinalIgnoreCase))
                 {
                     state.Messages.Add(new AIMessage { Content = "Goodbye!" });
-                    return WorkflowCommand<ChatWorkflowState>.Create(
+                    return WorkflowCommand<AIChatState>.Create(
                         gotoNode: WorkflowEdges.End,
                         update: state);
                 }
@@ -68,14 +68,14 @@ public static class AIChatWorkflow
                     state.Messages.Add(new AIMessage { Content = response.Content ?? "" });
                 }
 
-                return WorkflowCommand<ChatWorkflowState>.Create(
+                return WorkflowCommand<AIChatState>.Create(
                     gotoNode: WorkflowEdges.AskHuman,
                     update: state);
             })
-            .AddNode(WorkflowEdges.AskHuman, AskHumanNode.Create<ChatWorkflowState>())
+            .AddNode(WorkflowEdges.AskHuman, AskHumanNode.Create<AIChatState>())
             .AddEdge(WorkflowEdges.Start, "start");
 
-        return new WorkflowDeclaration<ChatWorkflowState>
+        return new WorkflowDeclaration<AIChatState>
         {
             Meta = new WorkflowMeta
             {

@@ -65,7 +65,9 @@ public static class SubgraphAsNode
 
         var configurable = new Dictionary<string, object>(config.Configurable)
         {
-            ["checkpoint_ns"] = childNs
+            ["checkpoint_ns"] = childNs,
+            // Parent checkpoint_id does not apply to child namespaces.
+            ["checkpoint_id"] = null
         };
         return new WorkflowRunnableConfig
         {

@@ -1,0 +1,102 @@
+using Microsoft.Extensions.DependencyInjection;
+using WorkflowEngine.Core.Execution;
+using WorkflowEngine.Core.Graph;
+using WorkflowEngine.Core.Nodes;
+using WorkflowEngine.Core.Persistence;
+using WorkflowEngine.Core.Registry;
+using WorkflowEngine.Core.State;
+using WorkflowEngine.Tests.UI.Backend.LLM;
+using WorkflowEngine.Tests.UI.Backend.Workflows.Onboarding;
+using WorkflowEngine.Tests.UI.Backend.Workflows.RoutedChat.Weather;
+
+namespace WorkflowEngine.Tests.UI.Backend.Workflows.RoutedChat;
+
+/// <summary>
+/// Routed chat workflow: welcome -> router (LLM) -> askHuman | weather subgraph | onboarding subgraph | none.
+/// Closed loop: after weather/onboarding/none we return to the router.
+/// </summary>
+public static class RoutedChatWorkflow
+{
+    /// <summary>
+    /// Builds the workflow declaration. Requires checkpointer to compile subgraphs (weather, onboarding).
+    /// </summary>
+    public static WorkflowDeclaration<RoutedChatState> Build(
+        IServiceScopeFactory scopeFactory)
+    {
+        // Weather subgraph: ask city -> AskHuman or forecast (LLM) -> End
+        var weatherGraph = new WorkflowGraph<WeatherSubState>()
+            .AddNode(WorkflowEdges.AskHuman, AskHumanNode.Create<WeatherSubState>())
+            .AddNode("askCity", AskCityNode.Create())
+            .AddNode("forecast", ForecastNode.Create(scopeFactory))
+            .AddEdge(WorkflowEdges.Start, "askCity");
+
+        var scope = scopeFactory.CreateScope();
+        var checkpointerFactory = scope.ServiceProvider.GetRequiredService<ICheckpointSaverFactory>();
+        var compiledWeather = weatherGraph.Compile(checkpointerFactory);
+
+        // Onboarding subgraph: dedicated onboarding state
+        var onboardingDeclaration = OnboardingWorkflow.Build(scopeFactory);
+        var compiledOnboarding = onboardingDeclaration.Workflow.Compile(checkpointerFactory);
+
+        var mainGraph = new WorkflowGraph<RoutedChatState>()
+            .AddNode("welcome", WelcomeNode.Create(scopeFactory))
+            .AddNode("router", RouterNode.Create(scopeFactory))
+            .AddNode(WorkflowEdges.AskHuman, AskHumanNode.Create<RoutedChatState>())
+            .AddNode("none", NoneNode.Create())
+            .AddNode(
+                "weather",
+                compiledWeather,
+                mapParentToSubgraph: p => new WeatherSubState
+                {
+                    Messages = p.Messages,
+                    City = p.WeatherCity
+                },
+                mergeSubgraphIntoParent: (p, s) =>
+                {
+                    p.Messages = s.Messages;
+                    p.WeatherCity = s.City;
+                    p.WeatherForecast = s.Forecast;
+                    return p;
+                })
+            .AddNode(
+                "onboarding",
+                compiledOnboarding,
+                mapParentToSubgraph: p => new OnboardingState
+                {
+                    Messages = p.Messages,
+                    OnboardingJob = p.OnboardingJob,
+                    OnboardingSphere = p.OnboardingSphere,
+                    OnboardingEmployees = p.OnboardingEmployees
+                },
+                mergeSubgraphIntoParent: (p, s) =>
+                {
+                    p.Messages = s.Messages;
+                    p.OnboardingJob = s.OnboardingJob;
+                    p.OnboardingSphere = s.OnboardingSphere;
+                    p.OnboardingEmployees = s.OnboardingEmployees;
+                    return p;
+                })
+            .AddEdge(WorkflowEdges.Start, "welcome")
+            .AddEdge("welcome", "router")
+            .AddEdge("router", WorkflowEdges.AskHuman)
+            .AddEdge("router", "weather")
+            .AddEdge("router", "onboarding")
+            .AddEdge("router", "none")
+            .AddEdge(WorkflowEdges.AskHuman, "router")
+            .AddEdge("none", "router")
+            .AddEdge("weather", "router")
+            .AddEdge("onboarding", "router");
+
+        return new WorkflowDeclaration<RoutedChatState>
+        {
+            Meta = new WorkflowMeta
+            {
+                Id = RoutedChatConstants.WorkflowId,
+                Name = "Routed Chat",
+                Description = "Router with weather forecast and onboarding subgraphs; LLM routes to weather, onboarding, or fallback.",
+                Version = "1.0.0"
+            },
+            Workflow = mainGraph
+        };
+    }
+}

@@ -11,7 +11,7 @@ public interface ICheckpointSaver
     /// Gets a checkpoint by config
     /// </summary>
     Task<CheckpointTuple?> GetAsync(WorkflowRunnableConfig config);
-    
+
     /// <summary>
     /// Saves a checkpoint
     /// </summary>
@@ -20,14 +20,14 @@ public interface ICheckpointSaver
         Checkpoint checkpoint,
         object metadata,
         Dictionary<string, string> newVersions);
-    
+
     /// <summary>
     /// Lists checkpoints
     /// </summary>
     IAsyncEnumerable<CheckpointTuple> ListAsync(
         WorkflowRunnableConfig config,
         CheckpointListOptions? options = null);
-    
+
     /// <summary>
     /// Sets up the checkpointer (e.g., creates database tables)
     /// </summary>
