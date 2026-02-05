@@ -100,12 +100,8 @@ public class MessageRepository : IMessageRepository
         return msg;
     }
 
-    public async Task<MessageEntity> CreateSiblingAsync(string editedMessageId, string newContent)
+    public async Task<MessageEntity> CreateSiblingAsync(MessageEntity edited, string newContent)
     {
-        var edited = await _context.Messages.FirstOrDefaultAsync(m => m.Id == editedMessageId);
-        if (edited == null)
-            throw new InvalidOperationException($"Message {editedMessageId} not found");
-
         var id = Guid.NewGuid().ToString();
         var msg = new MessageEntity
         {
@@ -116,7 +112,7 @@ public class MessageRepository : IMessageRepository
             Content = newContent,
             CreatedAt = DateTime.UtcNow,
             CheckpointId = edited.CheckpointId,
-            CheckpointNs = id,
+            CheckpointNs = edited.CheckpointNs,
             RequestId = edited.RequestId
         };
         _context.Messages.Add(msg);

@@ -165,7 +165,7 @@ public class ChatWorkflowServiceNew
         if (conversation == null)
             throw new InvalidOperationException("Conversation not found");
 
-        var newMessage = await _messageRepo.CreateSiblingAsync(messageId, newContent);
+        var newMessage = await _messageRepo.CreateSiblingAsync(message, newContent);
         // await _messageRepo.UpdateActiveLeafAsync(conversationId, newMessage.Id);
 
         conversation.ActiveLeafMessageId = newMessage.Id;
