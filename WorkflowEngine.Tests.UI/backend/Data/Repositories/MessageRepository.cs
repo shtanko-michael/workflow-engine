@@ -124,30 +124,30 @@ public class MessageRepository : IMessageRepository
         return msg;
     }
 
-    public async Task UpdateActiveLeafAsync(string conversationId, string leafMessageId)
-    {
-        var conv = await _context.Conversations.FirstOrDefaultAsync(c => c.Id == conversationId);
-        if (conv == null)
-            throw new InvalidOperationException($"Conversation {conversationId} not found");
+    // public async Task UpdateActiveLeafAsync(string conversationId, string leafMessageId)
+    // {
+    //     var conv = await _context.Conversations.FirstOrDefaultAsync(c => c.Id == conversationId);
+    //     if (conv == null)
+    //         throw new InvalidOperationException($"Conversation {conversationId} not found");
 
-        var msg = await _context.Messages
-            .FirstOrDefaultAsync(m => m.Id == leafMessageId && m.ConversationId == conversationId);
-        if (msg == null)
-            throw new InvalidOperationException($"Message {leafMessageId} not found in conversation");
+    //     var msg = await _context.Messages
+    //         .FirstOrDefaultAsync(m => m.Id == leafMessageId && m.ConversationId == conversationId);
+    //     if (msg == null)
+    //         throw new InvalidOperationException($"Message {leafMessageId} not found in conversation");
 
-        conv.ActiveLeafMessageId = leafMessageId;
-        conv.UpdatedAt = DateTime.UtcNow;
-        _context.Conversations.Update(conv);
-        await _context.SaveChangesAsync();
-    }
+    //     conv.ActiveLeafMessageId = leafMessageId;
+    //     conv.UpdatedAt = DateTime.UtcNow;
+    //     _context.Conversations.Update(conv);
+    //     await _context.SaveChangesAsync();
+    // }
 
-    public async Task UpdateCheckpointNamespaceAsync(string messageId, string checkpointNs)
+    public async Task UpdateContentAsync(string messageId, string content)
     {
         var msg = await _context.Messages.FirstOrDefaultAsync(m => m.Id == messageId);
         if (msg == null)
             throw new InvalidOperationException($"Message {messageId} not found");
 
-        msg.CheckpointNs = checkpointNs;
+        msg.Content = content;
         _context.Messages.Update(msg);
         await _context.SaveChangesAsync();
     }

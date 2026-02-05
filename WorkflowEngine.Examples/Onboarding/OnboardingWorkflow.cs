@@ -13,12 +13,12 @@ public static class OnboardingWorkflow
     public static WorkflowDeclaration<OnboardingState> Create()
     {
         var graph = new WorkflowGraph<OnboardingState>()
-            .AddNode("askHuman", AskHumanNode.Create<OnboardingState>())
-            .AddNode("errorHandler", ErrorHandlerNode.Create<OnboardingState>())
-            .AddNode("welcome", WelcomeNode.Create(), ends: new List<string> { "errorHandler", "survey" })
-            .AddNode("survey", SurveyNode.Create(), ends: new List<string> { "askHuman", "errorHandler", "complete" })
-            .AddNode("complete", CompleteNode.Create(), ends: new List<string> { "errorHandler", "summary" })
-            .AddNode("summary", SummaryNode.Create(), ends: new List<string> { "errorHandler" })
+            .AddNode(WorkflowEdges.AskHuman, AskHumanNode.Create<OnboardingState>())
+            .AddNode(WorkflowEdges.ErrorHandler, ErrorHandlerNode.Create<OnboardingState>())
+            .AddNode("welcome", WelcomeNode.Create(), ends: new List<string> { WorkflowEdges.ErrorHandler, "survey" })
+            .AddNode("survey", SurveyNode.Create(), ends: new List<string> { WorkflowEdges.AskHuman, WorkflowEdges.ErrorHandler, "complete" })
+            .AddNode("complete", CompleteNode.Create(), ends: new List<string> { WorkflowEdges.ErrorHandler, "summary" })
+            .AddNode("summary", SummaryNode.Create(), ends: new List<string> { WorkflowEdges.ErrorHandler })
             .AddEdge(WorkflowEdges.Start, "welcome");
         
         return new WorkflowDeclaration<OnboardingState>

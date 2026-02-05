@@ -3,6 +3,20 @@ import { HubConnectionBuilder, type HubConnection } from '@microsoft/signalr'
 import { apiBase } from '../api/client'
 import type { Dialog, MessageWithVersions } from '../types'
 
+/** Minimal placeholder for an assistant message created when first chunk arrives (streaming by messageId). */
+function streamingMessagePlaceholder(messageId: string, content: string): MessageWithVersions {
+  return {
+    messageId,
+    role: 'assistant',
+    activeVersionId: messageId,
+    content,
+    currentVersionIndex: 0,
+    totalVersions: 1,
+    versions: [],
+    createdAt: new Date().toISOString(),
+  }
+}
+
 type UseChatConnectionArgs = {
   activeDialogId: string | null
   setDialogs: React.Dispatch<React.SetStateAction<Dialog[]>>
@@ -10,6 +24,7 @@ type UseChatConnectionArgs = {
   setPendingResponse: React.Dispatch<React.SetStateAction<boolean>>
   setLoading: React.Dispatch<React.SetStateAction<boolean>>
   setStreamingContent: React.Dispatch<React.SetStateAction<string>>
+  setStreamingMessageId: React.Dispatch<React.SetStateAction<string | null>>
 }
 
 export type UseChatConnectionResult = {
@@ -25,6 +40,7 @@ export function useChatConnection({
   setPendingResponse,
   setLoading,
   setStreamingContent,
+  setStreamingMessageId,
 }: UseChatConnectionArgs): UseChatConnectionResult {
   const connection = useMemo<HubConnection>(() => {
     return new HubConnectionBuilder()
@@ -86,9 +102,27 @@ export function useChatConnection({
       )
     })
 
-    connection.on('assistantChunk', (dialogId: string, chunk: string) => {
+    // Backend sends assistantChunk(dialogId, messageId, chunk) when using gateway; or legacy assistantChunk(dialogId, chunk)
+    connection.on('assistantChunk', (dialogId: string, messageIdOrChunk: string, chunkOrUndefined?: string) => {
       if (dialogId !== activeDialogId) return
-      setStreamingContent((prev) => prev + (chunk ?? ''))
+      const hasMessageId = chunkOrUndefined !== undefined
+      const messageId = hasMessageId ? messageIdOrChunk : null
+      const chunk = hasMessageId ? (chunkOrUndefined ?? '') : (messageIdOrChunk ?? '')
+
+      if (messageId != null) {
+        setStreamingMessageId(messageId)
+        setMessages((prev) => {
+          const existing = prev.find((m) => m.messageId === messageId)
+          if (existing) {
+            return prev.map((m) =>
+              m.messageId === messageId ? { ...m, content: m.content + chunk } : m,
+            )
+          }
+          return [...prev, streamingMessagePlaceholder(messageId, chunk)]
+        })
+      } else {
+        setStreamingContent((prev) => prev + chunk)
+      }
     })
 
     connection.on('messagesUpdated', (payload: MessageWithVersions[]) => {
@@ -97,6 +131,7 @@ export function useChatConnection({
       setPendingResponse(false)
       setLoading(false)
       setStreamingContent('')
+      setStreamingMessageId(null)
     })
 
     return () => {
@@ -112,6 +147,7 @@ export function useChatConnection({
     setPendingResponse,
     setLoading,
     setStreamingContent,
+    setStreamingMessageId,
   ])
 
   const joinDialogNow = useCallback(

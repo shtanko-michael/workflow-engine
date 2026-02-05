@@ -1,4 +1,3 @@
-using Microsoft.Extensions.DependencyInjection;
 using WorkflowEngine.Core.Commands;
 using WorkflowEngine.Core.Execution;
 using WorkflowEngine.Core.Graph;
@@ -61,7 +60,11 @@ public static class SurveyStep
         }
 
         var questionToUser = output.QuestionToUser?.Trim() ?? "NO DATA";
-        state.Messages.Add(new AIMessage { Content = questionToUser });
+        var parentId = state.Messages.Count > 0 ? state.Messages[^1].Id : null;
+        var message = await context.Gateway.CreateAssistantMessageAsync(config, parentId, questionToUser, CancellationToken.None);
+        message.Content = questionToUser;
+        state.Messages.Add(message);
+        await context.Gateway.NotifyStreamEndAsync(config, message.Id, message.Content);
         return WorkflowCommand<OnboardingState>.Create(
             gotoNode: WorkflowEdges.AskHuman,
             update: state);

@@ -1,6 +1,4 @@
-using Microsoft.Extensions.DependencyInjection;
 using WorkflowEngine.Core.Commands;
-using WorkflowEngine.Core.Execution;
 using WorkflowEngine.Core.Graph;
 using WorkflowEngine.Core.Nodes;
 using WorkflowEngine.Core.State;
@@ -22,23 +20,23 @@ public static class RouterNode
 
             if (!hasUserInput)
             {
-                // Ask user what they want (LLM can phrase the prompt)
+                var parentId = state.Messages.Count > 0 ? state.Messages[^1].Id : null;
+                var message = await context.Gateway.CreateAssistantMessageAsync(config, parentId, "", CancellationToken.None);
+                state.Messages.Add(message);
+
                 var request = new LLMRequest
                 {
                     Messages = new List<LLMMessage> { new() { Role = "user", Content = RoutedChatConstants.RouterPromptNoInput } }
                 };
 
-                Func<string, Task>? streamCallback = null;
-                if (config.Configurable.TryGetValue("stream_chunk_callback", out var cbObj) && cbObj is Func<string, Task> cb)
-                    streamCallback = cb;
+                Func<string, Task> streamCallback = (chunk) => context.Gateway.StreamChunkAsync(config, message.Id, chunk);
 
                 using (var scope = scopeFactory.CreateScope())
                 {
                     var llm = scope.ServiceProvider.GetRequiredService<ILLMProviderClient>();
-                    var response = streamCallback != null
-                        ? await llm.ExecuteStreamAsync(request, streamCallback, model: null, CancellationToken.None).ConfigureAwait(false)
-                        : await llm.ExecuteAsync(request, model: null, CancellationToken.None).ConfigureAwait(false);
-                    state.Messages.Add(new AIMessage { Content = response.Content ?? "" });
+                    var response = await llm.ExecuteStreamAsync(request, streamCallback, model: null, CancellationToken.None).ConfigureAwait(false);
+                    message.Content = response.Content ?? "";
+                    await context.Gateway.NotifyStreamEndAsync(config, message.Id, message.Content);
                 }
 
                 state.InterruptCaller = "router";

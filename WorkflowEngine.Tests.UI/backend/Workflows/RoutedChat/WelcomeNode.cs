@@ -17,22 +17,23 @@ public static class WelcomeNode
     {
         return WithContextNode.Wrap<RoutedChatState>("welcome", async (state, context, errorHandler, config) =>
         {
+            var parentId = state.Messages.Count > 0 ? state.Messages[^1].Id : null;
+            var message = await context.Gateway.CreateAssistantMessageAsync(config, parentId, "", CancellationToken.None);
+            state.Messages.Add(message);
+
             var request = new LLMRequest
             {
                 Messages = new List<LLMMessage> { new() { Role = "user", Content = RoutedChatConstants.WelcomePrompt } }
             };
 
-            Func<string, Task>? streamCallback = null;
-            if (config.Configurable.TryGetValue("stream_chunk_callback", out var callbackObj) && callbackObj is Func<string, Task> cb)
-                streamCallback = cb;
+            Func<string, Task> streamCallback = (chunk) => context.Gateway.StreamChunkAsync(config, message.Id, chunk);
 
             using var scope = scopeFactory.CreateScope();
             var llm = scope.ServiceProvider.GetRequiredService<ILLMProviderClient>();
-            var response = streamCallback != null
-                ? await llm.ExecuteStreamAsync(request, streamCallback, model: null, CancellationToken.None).ConfigureAwait(false)
-                : await llm.ExecuteAsync(request, model: null, CancellationToken.None).ConfigureAwait(false);
+            var response = await llm.ExecuteStreamAsync(request, streamCallback, model: null, CancellationToken.None).ConfigureAwait(false);
 
-            state.Messages.Add(new AIMessage { Content = response.Content ?? "" });
+            message.Content = response.Content ?? "";
+            await context.Gateway.NotifyStreamEndAsync(config, message.Id, message.Content);
 
             return WorkflowCommand<RoutedChatState>.Create(
                 gotoNode: "router",

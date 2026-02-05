@@ -15,9 +15,9 @@ public static class AskHumanNode
     /// </summary>
     public static WorkflowNode<TState> Create<TState>() where TState : WorkflowStateBase
     {
-        return WithContextNode.Wrap<TState>("askHuman", (state, ctx, errorHandler, config) =>
+        return WithContextNode.Wrap<TState>(WorkflowEdges.AskHuman, (state, ctx, errorHandler, config) =>
         {
-            var hasCommand = config.Configurable.TryGetValue(WorkflowGlobals.WorkflowCommandKey, out var command);
+            var hasCommand = config.Configurable.TryGetValue(WorkflowConfigKeys.WorkflowCommandKey, out var command);
             if (hasCommand
                 && command is WorkflowCommand<TState> workflowCommand
                 && workflowCommand.IsResume

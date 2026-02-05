@@ -1,9 +1,11 @@
+using WorkflowEngine.Core.State;
+
 namespace WorkflowEngine.Core.Commands;
 
 /// <summary>
 /// Command for controlling workflow execution
 /// </summary>
-public class WorkflowCommand<TState> where TState : class
+public class WorkflowCommand<TState> where TState : WorkflowStateBase
 {
     /// <summary>
     /// Node name to go to
@@ -32,6 +34,31 @@ public class WorkflowCommand<TState> where TState : class
     {
         return new WorkflowCommand<TState>
         {
+            Goto = gotoNode,
+            Update = update,
+            Resume = resume
+        };
+    }
+}
+
+public class SubGraphWorkflowCommand<TChildState, TParentState> : WorkflowCommand<TParentState>
+    where TParentState : WorkflowStateBase
+    where TChildState : WorkflowStateBase
+{
+    TChildState ChildState { get; set; }
+
+    /// <summary>
+    /// Creates a new workflow command
+    /// </summary>
+    public static SubGraphWorkflowCommand<TChildState, TParentState> Create(
+        TChildState state,
+        string? gotoNode = null,
+        TParentState? update = null,
+        object? resume = null)
+    {
+        return new SubGraphWorkflowCommand<TChildState, TParentState>
+        {
+            ChildState = state,
             Goto = gotoNode,
             Update = update,
             Resume = resume

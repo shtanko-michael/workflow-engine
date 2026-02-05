@@ -15,16 +15,17 @@ public static class AIChatWorkflow
     public static WorkflowDeclaration<AIChatState> Build(IServiceScopeFactory scopeFactory)
     {
         var workflow = new WorkflowGraph<AIChatState>()
-            .AddNode("start", (state, ctx, errorHandler, cfg) =>
+            .AddNode("start", async (state, ctx, errorHandler, cfg) =>
             {
-                state.Messages.Add(new AIMessage
-                {
-                    Content = "Hello! I'm an AI assistant. Ask me anything or type \"bye\" to finish."
-                });
+                var parentId = state.Messages.Count > 0 ? state.Messages[^1].Id : null;
+                var message = await ctx.Gateway.CreateAssistantMessageAsync(cfg, parentId, "", CancellationToken.None);
+                message.Content = "Hello! I'm an AI assistant. Ask me anything or type \"bye\" to finish.";
+                state.Messages.Add(message);
+                await ctx.Gateway.NotifyStreamEndAsync(cfg, message.Id, message.Content);
                 state.InterruptCaller = "handleInput";
-                return Task.FromResult(WorkflowCommand<AIChatState>.Create(
+                return WorkflowCommand<AIChatState>.Create(
                     gotoNode: WorkflowEdges.AskHuman,
-                    update: state));
+                    update: state);
             })
             .AddNode("handleInput", async (state, ctx, errorHandler, cfg) =>
             {
@@ -32,9 +33,14 @@ public static class AIChatWorkflow
                 var content = lastHuman?.Content?.Trim() ?? string.Empty;
                 state.LastUserMessage = content;
 
+                var parentId = state.Messages.Count > 0 ? state.Messages[^1].Id : null;
+                var message = await ctx.Gateway.CreateAssistantMessageAsync(cfg, parentId, "", CancellationToken.None);
+                state.Messages.Add(message);
+
                 if (string.Equals(content, "bye", StringComparison.OrdinalIgnoreCase))
                 {
-                    state.Messages.Add(new AIMessage { Content = "Goodbye!" });
+                    message.Content = "Goodbye!";
+                    await ctx.Gateway.NotifyStreamEndAsync(cfg, message.Id, message.Content);
                     return WorkflowCommand<AIChatState>.Create(
                         gotoNode: WorkflowEdges.End,
                         update: state);
@@ -55,17 +61,14 @@ public static class AIChatWorkflow
                         .ToList()
                 };
 
-                Func<string, Task>? streamCallback = null;
-                if (cfg.Configurable.TryGetValue("stream_chunk_callback", out var callbackObj) && callbackObj is Func<string, Task> cb)
-                    streamCallback = cb;
+                Func<string, Task> streamCallback = (chunk) => ctx.Gateway.StreamChunkAsync(cfg, message.Id, chunk);
 
                 using (var scope = scopeFactory.CreateScope())
                 {
                     var llm = scope.ServiceProvider.GetRequiredService<ILLMProviderClient>();
-                    var response = streamCallback != null
-                        ? await llm.ExecuteStreamAsync(request, streamCallback, model: null, CancellationToken.None).ConfigureAwait(false)
-                        : await llm.ExecuteAsync(request, model: null, CancellationToken.None).ConfigureAwait(false);
-                    state.Messages.Add(new AIMessage { Content = response.Content ?? "" });
+                    var response = await llm.ExecuteStreamAsync(request, streamCallback, model: null, CancellationToken.None).ConfigureAwait(false);
+                    message.Content = response.Content ?? "";
+                    await ctx.Gateway.NotifyStreamEndAsync(cfg, message.Id, message.Content);
                 }
 
                 return WorkflowCommand<AIChatState>.Create(

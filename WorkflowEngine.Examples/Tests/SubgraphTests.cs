@@ -242,8 +242,8 @@ public class SubgraphTests
         ParentState? mergedState = null;
         var parentGraph = new WorkflowGraph<ParentState>()
             .AddNode("sub", subgraph,
-                mapParentToSubgraph: p => new SubState { SubFlow = p.ParentFlow, SubCounter = p.ParentCounter },
-                mergeSubgraphIntoParent: (p, s) =>
+                initialStateMapping: p => new SubState { SubFlow = p.ParentFlow, SubCounter = p.ParentCounter },
+                completeStateMapping: (p, s) =>
                 {
                     mergedState = new ParentState
                     {
@@ -317,8 +317,8 @@ public class SubgraphTests
 
         var parentGraph = new WorkflowGraph<ParentState>()
             .AddNode("sub", subgraph,
-                mapParentToSubgraph: p => new SubState { SubFlow = p.ParentFlow, SubCounter = p.ParentCounter, Messages = p.Messages },
-                mergeSubgraphIntoParent: (p, s) =>
+                initialStateMapping: p => new SubState { SubFlow = p.ParentFlow, SubCounter = p.ParentCounter, Messages = p.Messages },
+                completeStateMapping: (p, s) =>
                 {
                     var merged = new ParentState
                     {

@@ -3,6 +3,7 @@ using WorkflowEngine.Core.Commands;
 using WorkflowEngine.Core.Execution;
 using WorkflowEngine.Core.Exceptions;
 using WorkflowEngine.Core.Graph;
+using WorkflowEngine.Core.State;
 
 namespace WorkflowEngine.Core.Nodes;
 
@@ -17,7 +18,7 @@ public static class WithContextNode
     public static WorkflowNode<TState> Wrap<TState>(
         string name,
         Func<TState, WorkflowRunnableContext, Func<Exception, WorkflowCommand<TState>>, WorkflowRunnableConfig, Task<WorkflowCommand<TState>>> nodeFunc)
-        where TState : class
+        where TState : WorkflowStateBase
     {
         if (string.IsNullOrWhiteSpace(name))
             throw new ArgumentException("Node name cannot be null or empty", nameof(name));
@@ -28,11 +29,12 @@ public static class WithContextNode
         {
             try
             {
-                // Enhance context with node name
+                // Enhance context with node name (preserve Gateway so nodes can create/stream messages)
                 var enhancedContext = new WorkflowRunnableContext
                 {
                     Controller = context.Controller,
                     Container = context.Container,
+                    Gateway = context.Gateway,
                     Tracking = new ClientTrackingContext
                     {
                         Comment = context.Tracking.Comment,

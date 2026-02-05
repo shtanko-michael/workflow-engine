@@ -9,4 +9,5 @@ public interface IConversationRepository
     Task<ConversationEntity> CreateAsync(ConversationEntity conversation);
     Task UpdateAsync(ConversationEntity conversation);
     Task DeleteAsync(string id);
+    Task SetActiveLeafId(string id, string leafId);
 }

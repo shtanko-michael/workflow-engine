@@ -41,17 +41,18 @@ public static class RoutedChatWorkflow
         var mainGraph = new WorkflowGraph<RoutedChatState>()
             .AddNode("welcome", WelcomeNode.Create(scopeFactory))
             .AddNode("router", RouterNode.Create(scopeFactory))
+            .AddNode(WorkflowEdges.ErrorHandler, ErrorHandlerNode.Create<RoutedChatState>())
             .AddNode(WorkflowEdges.AskHuman, AskHumanNode.Create<RoutedChatState>())
             .AddNode("none", NoneNode.Create())
             .AddNode(
                 "weather",
                 compiledWeather,
-                mapParentToSubgraph: p => new WeatherSubState
+                initialStateMapping: p => new WeatherSubState
                 {
                     Messages = p.Messages,
                     City = p.WeatherCity
                 },
-                mergeSubgraphIntoParent: (p, s) =>
+                completeStateMapping: (p, s) =>
                 {
                     p.Messages = s.Messages;
                     p.WeatherCity = s.City;
@@ -61,16 +62,14 @@ public static class RoutedChatWorkflow
             .AddNode(
                 "onboarding",
                 compiledOnboarding,
-                mapParentToSubgraph: p => new OnboardingState
+                initialStateMapping: p => new OnboardingState
                 {
-                    Messages = p.Messages,
-                    OnboardingJob = p.OnboardingJob,
-                    OnboardingSphere = p.OnboardingSphere,
-                    OnboardingEmployees = p.OnboardingEmployees
+                    Messages = p.Messages.Count > 0 ? [p.Messages.Last()] : [],
                 },
-                mergeSubgraphIntoParent: (p, s) =>
+                completeStateMapping: (p, s) =>
                 {
-                    p.Messages = s.Messages;
+                    if (s.Messages.Count > 0 && s.Messages.Last() is { } lastMsg)
+                        p.Messages = p.Messages.Append(lastMsg).ToList();
                     p.OnboardingJob = s.OnboardingJob;
                     p.OnboardingSphere = s.OnboardingSphere;
                     p.OnboardingEmployees = s.OnboardingEmployees;

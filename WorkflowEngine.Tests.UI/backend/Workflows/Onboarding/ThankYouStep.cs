@@ -19,6 +19,10 @@ public static class ThankYouStep
         WorkflowRunnableConfig config,
         IServiceScopeFactory scopeFactory)
     {
+        var parentId = state.Messages.Count > 0 ? state.Messages[^1].Id : null;
+        var message = await context.Gateway.CreateAssistantMessageAsync(config, parentId, "", CancellationToken.None);
+        state.Messages.Add(message);
+
         var summary = $"Job: {state.OnboardingJob ?? "—"}, Industry: {state.OnboardingSphere ?? "—"}, Team size: {state.OnboardingEmployees?.ToString() ?? "—"}.";
         var prompt = $"Write a short thank-you message for completing the onboarding. Then present this summary to the user in a friendly way: {summary}";
 
@@ -27,17 +31,14 @@ public static class ThankYouStep
             Messages = new List<LLMMessage> { new() { Role = "user", Content = prompt } }
         };
 
-        Func<string, Task>? streamCallback = null;
-        if (config.Configurable.TryGetValue("stream_chunk_callback", out var callbackObj) && callbackObj is Func<string, Task> cb)
-            streamCallback = cb;
+        Func<string, Task> streamCallback = (chunk) => context.Gateway.StreamChunkAsync(config, message.Id, chunk);
 
         using var scope = scopeFactory.CreateScope();
         var llm = scope.ServiceProvider.GetRequiredService<ILLMProviderClient>();
-        var response = streamCallback != null
-            ? await llm.ExecuteStreamAsync(request, streamCallback, model: null, CancellationToken.None).ConfigureAwait(false)
-            : await llm.ExecuteAsync(request, model: null, CancellationToken.None).ConfigureAwait(false);
+        var response = await llm.ExecuteStreamAsync(request, streamCallback, model: null, CancellationToken.None).ConfigureAwait(false);
 
-        state.Messages.Add(new AIMessage { Content = response.Content ?? "" });
+        message.Content = response.Content ?? "";
+        await context.Gateway.NotifyStreamEndAsync(config, message.Id, message.Content);
 
         return WorkflowCommand<OnboardingState>.Create(
             gotoNode: WorkflowEdges.End,

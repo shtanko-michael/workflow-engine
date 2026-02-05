@@ -17,6 +17,10 @@ public static class ForecastNode
     {
         return WithContextNode.Wrap<WeatherSubState>("forecast", async (state, context, errorHandler, config) =>
         {
+            var parentId = state.Messages.Count > 0 ? state.Messages[^1].Id : null;
+            var message = await context.Gateway.CreateAssistantMessageAsync(config, parentId, "", CancellationToken.None);
+            state.Messages.Add(message);
+
             var city = state.City ?? "Unknown";
             var request = new LLMRequest
             {
@@ -27,18 +31,15 @@ public static class ForecastNode
                 }
             };
 
-            Func<string, Task>? streamCallback = null;
-            if (config.Configurable.TryGetValue("stream_chunk_callback", out var callbackObj) && callbackObj is Func<string, Task> cb)
-                streamCallback = cb;
+            Func<string, Task> streamCallback = (chunk) => context.Gateway.StreamChunkAsync(config, message.Id, chunk);
 
             using var scope = scopeFactory.CreateScope();
             var llm = scope.ServiceProvider.GetRequiredService<ILLMProviderClient>();
-            var response = streamCallback != null
-                ? await llm.ExecuteStreamAsync(request, streamCallback, model: null, CancellationToken.None).ConfigureAwait(false)
-                : await llm.ExecuteAsync(request, model: null, CancellationToken.None).ConfigureAwait(false);
+            var response = await llm.ExecuteStreamAsync(request, streamCallback, model: null, CancellationToken.None).ConfigureAwait(false);
 
             state.Forecast = response.Content?.Trim() ?? $"No forecast for {city}.";
-            state.Messages.Add(new AIMessage { Content = state.Forecast });
+            message.Content = state.Forecast;
+            await context.Gateway.NotifyStreamEndAsync(config, message.Id, message.Content);
             state.WorkflowCompleted = true;
 
             return WorkflowCommand<WeatherSubState>.Create(

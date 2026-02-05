@@ -95,8 +95,8 @@ public class WorkflowGraph<TState> where TState : WorkflowStateBase
     public WorkflowGraph<TState> AddNode<TSubState>(
         string name,
         CompiledWorkflowGraph<TSubState> subgraph,
-        Func<TState, TSubState> mapParentToSubgraph,
-        Func<TState, TSubState, TState> mergeSubgraphIntoParent,
+        Func<TState, TSubState> initialStateMapping,
+        Func<TState, TSubState, TState> completeStateMapping,
         List<string>? ends = null)
         where TSubState : WorkflowStateBase
     {
@@ -104,17 +104,17 @@ public class WorkflowGraph<TState> where TState : WorkflowStateBase
             throw new ArgumentException("Node name cannot be null or empty", nameof(name));
         if (subgraph == null)
             throw new ArgumentNullException(nameof(subgraph));
-        if (mapParentToSubgraph == null)
-            throw new ArgumentNullException(nameof(mapParentToSubgraph));
-        if (mergeSubgraphIntoParent == null)
-            throw new ArgumentNullException(nameof(mergeSubgraphIntoParent));
+        if (initialStateMapping == null)
+            throw new ArgumentNullException(nameof(initialStateMapping));
+        if (completeStateMapping == null)
+            throw new ArgumentNullException(nameof(completeStateMapping));
         if (_nodes.ContainsKey(name))
             throw new ArgumentException($"A node with name '{name}' already exists.", nameof(name));
         if (_subgraphNodes.ContainsKey(name))
             throw new ArgumentException($"A subgraph node with name '{name}' already exists.", nameof(name));
 
         _subgraphNodesWithMapping[name] = new SubgraphNodeFactory<TState, TSubState>(
-            subgraph, mapParentToSubgraph, mergeSubgraphIntoParent);
+            subgraph, initialStateMapping, completeStateMapping);
         if (ends != null && ends.Count > 0)
             _nodeEnds[name] = ends;
         return this;
@@ -181,12 +181,20 @@ public class WorkflowGraph<TState> where TState : WorkflowStateBase
     internal IReadOnlyDictionary<string, List<string>> NodeEnds => _nodeEnds;
 }
 
-public class WorkflowGlobals
+public class WorkflowConfigKeys
 {
     /// <summary>
     /// Key in config.Configurable used to pass the current workflow command to nodes (e.g. for resume).
     /// Set by CompiledWorkflowGraph at the start of InvokeAsync.
     /// </summary>
     public const string WorkflowCommandKey = "__workflow_command__";
+
+    public const string ThreadId = "thread_id";
+    public const string CheckpointId = "checkpoint_id";
+    public const string CheckpointNs = "checkpoint_ns";
+    public const string ParentCheckpointId = "parent_checkpoint_id";
+    public const string LastMessageId = "last_message_id";
+    public const string SubgraphCheckpointId = "subgraph_checkpoint_id";
+    public const string SubgraphCheckpointNs = "subgraph_checkpoint_ns";
 
 }

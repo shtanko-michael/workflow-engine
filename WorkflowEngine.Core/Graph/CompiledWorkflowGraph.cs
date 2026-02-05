@@ -60,7 +60,7 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
             throw new ArgumentException("Context is required", nameof(config));
 
         // store command in config for nodes to access
-        config.Configurable[WorkflowGlobals.WorkflowCommandKey] = command;
+        config.Configurable[WorkflowConfigKeys.WorkflowCommandKey] = command;
 
         var (state, resumeNode) = await GetOrCreateStateAsync(config, command);
         if (state.WorkflowCompleted)
@@ -78,6 +78,9 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
 
         try
         {
+            config.ParentCheckpointId = config.CheckpointId;
+            // initially set next checkpoint id to be able to send proper checkpoint id to gateway
+            config.CheckpointId = Guid.NewGuid().ToString();
             while (currentNode != null && currentNode != WorkflowEdges.End)
             {
                 _logger?.LogDebug("Executing node: {NodeName}", currentNode);
@@ -174,6 +177,8 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
             // Restore state from checkpoint
             var restoredState = TryGetStateFromCheckpoint(checkpoint.Checkpoint);
             var resumeNode = TryGetStringChannel(checkpoint.Checkpoint, CurrentNodeChannel);
+            config.SubgraphCheckpointId = TryGetStringChannel(checkpoint.Checkpoint, "subgraph_checkpoint_id");
+            config.SubgraphCheckpointNs = TryGetStringChannel(checkpoint.Checkpoint, "subgraph_checkpoint_ns");
             if (restoredState != null)
             {
                 #region agent log
@@ -223,7 +228,7 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
     {
         var newVersions = new Dictionary<string, string>
         {
-            [StateChannel] = NextVersion()
+            [StateChannel] = NextVersion(),
         };
 
         if (!string.IsNullOrWhiteSpace(currentNode))
@@ -231,15 +236,21 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
             newVersions[CurrentNodeChannel] = NextVersion();
         }
 
+        var cid = config.CheckpointId ?? Guid.NewGuid().ToString();
         var checkpoint = new Checkpoint
         {
-            Id = Guid.NewGuid().ToString(),
+            Id = cid,
             ChannelValues = new Dictionary<string, object>
             {
                 [StateChannel] = state
             },
             ChannelVersions = newVersions
         };
+
+        if (!string.IsNullOrEmpty(config.SubgraphCheckpointId))
+            checkpoint.ChannelValues.Add(WorkflowConfigKeys.SubgraphCheckpointId, config.SubgraphCheckpointId);
+        if (!string.IsNullOrEmpty(config.SubgraphCheckpointNs))
+            checkpoint.ChannelValues.Add(WorkflowConfigKeys.SubgraphCheckpointNs, config.SubgraphCheckpointNs);
 
         if (!string.IsNullOrWhiteSpace(currentNode))
         {
@@ -253,6 +264,11 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
 
         var checkpointer = await _checkpointerFactory.Build();
         await checkpointer.PutAsync(config, checkpoint, new { }, newVersions);
+
+        config.ParentCheckpointId = config.CheckpointId;
+        // Update config so gateways (e.g. bridge) see current checkpoint when creating messages
+        config.CheckpointId = Guid.NewGuid().ToString();
+
         #region agent log
         DebugLog(
             location: "CompiledWorkflowGraph.SaveCheckpointAsync",
@@ -315,7 +331,7 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
             }
 
             return WorkflowCommand<TState>.Create(
-                gotoNode: "errorHandler",
+                gotoNode: WorkflowEdges.ErrorHandler,
                 update: errorState
             );
         };
