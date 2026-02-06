@@ -110,6 +110,8 @@ public static class SubgraphAsNode
             var commandToChild = WorkflowCommand<TSubState>.Create(
                 update: string.IsNullOrEmpty(childConfig.CheckpointId) ? initialStateMapping(parentState) : null,
                 resume: parentCommand?.Resume);
+            // remove parent's command
+            parentConfig.Configurable.Remove(WorkflowConfigKeys.WorkflowCommandKey);
 
             var childState = await subgraph.InvokeAsync(commandToChild, childConfig);
             if (childState.WorkflowCompleted)

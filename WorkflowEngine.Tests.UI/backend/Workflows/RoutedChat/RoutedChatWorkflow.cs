@@ -49,12 +49,12 @@ public static class RoutedChatWorkflow
                 compiledWeather,
                 initialStateMapping: p => new WeatherSubState
                 {
-                    Messages = p.Messages,
-                    City = p.WeatherCity
+                    Messages = p.Messages.Count > 0 ? [p.Messages.Last()] : [],
                 },
                 completeStateMapping: (p, s) =>
                 {
-                    p.Messages = s.Messages;
+                    if (s.Messages.Count > 0 && s.Messages.Last() is { } lastMsg)
+                        p.Messages = p.Messages.Append(lastMsg).ToList();
                     p.WeatherCity = s.City;
                     p.WeatherForecast = s.Forecast;
                     return p;
