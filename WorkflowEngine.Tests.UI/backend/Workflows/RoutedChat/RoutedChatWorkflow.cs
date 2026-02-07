@@ -43,6 +43,7 @@ public static class RoutedChatWorkflow
             .AddNode("router", RouterNode.Create(scopeFactory))
             .AddNode(WorkflowEdges.ErrorHandler, ErrorHandlerNode.Create<RoutedChatState>())
             .AddNode(WorkflowEdges.AskHuman, AskHumanNode.Create<RoutedChatState>())
+            .AddNode("ask", AskNode.Create(scopeFactory))
             .AddNode("none", NoneNode.Create())
             .AddNode(
                 "weather",
@@ -55,8 +56,8 @@ public static class RoutedChatWorkflow
                 {
                     if (s.Messages.Count > 0 && s.Messages.Last() is { } lastMsg)
                         p.Messages = p.Messages.Append(lastMsg).ToList();
-                    p.WeatherCity = s.City;
-                    p.WeatherForecast = s.Forecast;
+                    if (!string.IsNullOrEmpty(s.City))
+                        p.RequestedForecastCities = (p.RequestedForecastCities ?? []).Append(s.City).ToArray();
                     return p;
                 })
             .AddNode(
@@ -70,18 +71,19 @@ public static class RoutedChatWorkflow
                 {
                     if (s.Messages.Count > 0 && s.Messages.Last() is { } lastMsg)
                         p.Messages = p.Messages.Append(lastMsg).ToList();
-                    p.OnboardingJob = s.OnboardingJob;
-                    p.OnboardingSphere = s.OnboardingSphere;
-                    p.OnboardingEmployees = s.OnboardingEmployees;
+                    var surveyEntry = $"Job: {s.OnboardingJob ?? "—"}, Industry: {s.OnboardingSphere ?? "—"}, Team size: {s.OnboardingEmployees?.ToString() ?? "—"}";
+                    p.SurveyResults = (p.SurveyResults ?? []).Append(surveyEntry).ToArray();
                     return p;
                 })
             .AddEdge(WorkflowEdges.Start, "welcome")
             .AddEdge("welcome", "router")
             .AddEdge("router", WorkflowEdges.AskHuman)
+            .AddEdge("router", "ask")
             .AddEdge("router", "weather")
             .AddEdge("router", "onboarding")
             .AddEdge("router", "none")
             .AddEdge(WorkflowEdges.AskHuman, "router")
+            .AddEdge("ask", "router")
             .AddEdge("none", "router")
             .AddEdge("weather", "router")
             .AddEdge("onboarding", "router");

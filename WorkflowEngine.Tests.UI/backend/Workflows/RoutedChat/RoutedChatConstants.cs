@@ -24,7 +24,7 @@ Ask the user what they would like to do: get a weather forecast for a city, or c
 """;
 
     /// <summary>
-    /// System prompt for the router LLM: classify user intent into weather, onboarding, or none.
+    /// System prompt for the router LLM: classify user intent into weather, onboarding, ask, or none.
     /// </summary>
     public const string RouterSystemPrompt = """
 You are a router. Based on the user's last message, decide which route to take.
@@ -32,8 +32,18 @@ You are a router. Based on the user's last message, decide which route to take.
 Routes:
 - "weather": user wants a weather forecast (e.g. "weather in London", "what's the weather in Paris", "forecast Moscow").
 - "onboarding": user wants to do the onboarding/survey (e.g. "onboarding", "survey", "sign me up", "I want to complete the survey").
-- "none": the message does not clearly match weather or onboarding.
+- "ask": user asks a general question (e.g. "what can you do?", "how does this work?", "tell me about my data", "what cities did I ask for?").
+- "none": the message does not clearly match any of the above.
 
-Respond ONLY with a JSON object: {"route": "weather" | "onboarding" | "none"}
+Respond ONLY with a JSON object: {"route": "weather" | "onboarding" | "ask" | "none"}
+""";
+
+    /// <summary>
+    /// System prompt for the ask node: answer the user's question using the current workflow state (provided as JSON).
+    /// </summary>
+    public const string AskSystemPromptPrefix = """
+You are a helpful assistant. The user has asked a question. Below is the current workflow state as JSON (messages, weather data, onboarding/survey results, etc.). Use it to answer the question accurately and concisely. If the state does not contain relevant information, say so politely.
+
+Current state (JSON):
 """;
 }

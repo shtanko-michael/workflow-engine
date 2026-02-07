@@ -61,7 +61,7 @@ public static class RouterNode
                 classifyRequest, model: null, CancellationToken.None).ConfigureAwait(false);
 
             var route = classifyResponse.Output?.Route?.Trim().ToLowerInvariant() ?? "none";
-            if (route != "weather" && route != "onboarding")
+            if (route != "weather" && route != "onboarding" && route != "ask")
                 route = "none";
 
             return WorkflowCommand<RoutedChatState>.Create(
