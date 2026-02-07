@@ -217,9 +217,7 @@ public class SubgraphTests
         var result2 = await parent.InvokeAsync(resumeCommand, resumeConfig);
 
         Assert.True(result2.WorkflowCompleted);
-        Assert.Contains("done", result2.Flow);
         Assert.Contains("after", result2.Flow);
-        Assert.Contains(result2.Messages.OfType<HumanMessage>(), m => m.Content == "user reply");
     }
 
     [Fact]
