@@ -12,9 +12,8 @@ public interface IWorkflowRunGateway
     /// Creates an assistant message slot. When a bridge is used, this creates the message in the external system and returns it with Id set.
     /// Otherwise returns an in-memory message with a new Id.
     /// </summary>
-    /// <param name="parentMessageId">Optional parent message id for threading (e.g. last message in state).</param>
     /// <param name="cancellationToken">Cancellation token.</param>
-    Task<AIMessage> CreateAssistantMessageAsync(WorkflowRunnableConfig config, string? parentMessageId = null, string content = "", CancellationToken cancellationToken = default);
+    Task<AIMessage> CreateAssistantMessageAsync(WorkflowRunnableConfig config, string content = "", CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Streams a chunk to the message identified by <paramref name="messageId"/> (e.g. push to clients via SignalR).

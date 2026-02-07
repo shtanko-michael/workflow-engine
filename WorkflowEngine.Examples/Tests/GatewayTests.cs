@@ -41,21 +41,22 @@ public class GatewayTests
         public List<(string MessageId, string Chunk)> StreamChunks { get; } = new();
         public List<(string MessageId, string? FullContent)> NotifyStreamEndCalls { get; } = new();
 
-        public Task<AIMessage> CreateAssistantMessageAsync(string? parentMessageId = null, CancellationToken cancellationToken = default)
+        public Task<AIMessage> CreateAssistantMessageAsync(WorkflowRunnableConfig config, string content = "", CancellationToken cancellationToken = default)
         {
-            CreateParentIds.Add(parentMessageId ?? "<null>");
+            var parentId = config.Configurable.TryGetValue("parent_message_id", out var pid) ? pid?.ToString() ?? "<null>" : "<null>";
+            CreateParentIds.Add(parentId);
             var id = $"msg-{++_messageCounter}";
             CreatedMessageIds.Add(id);
-            return Task.FromResult(new AIMessage { Id = id, Content = string.Empty });
+            return Task.FromResult(new AIMessage { Id = id, Content = content });
         }
 
-        public Task StreamChunkAsync(string messageId, string chunk, CancellationToken cancellationToken = default)
+        public Task StreamChunkAsync(WorkflowRunnableConfig config, string messageId, string chunk, CancellationToken cancellationToken = default)
         {
             StreamChunks.Add((messageId, chunk));
             return Task.CompletedTask;
         }
 
-        public Task NotifyStreamEndAsync(string messageId, string? fullContent = null, CancellationToken cancellationToken = default)
+        public Task NotifyStreamEndAsync(WorkflowRunnableConfig config, string messageId, string? fullContent = null, CancellationToken cancellationToken = default)
         {
             NotifyStreamEndCalls.Add((messageId, fullContent));
             return Task.CompletedTask;
@@ -79,18 +80,20 @@ public class GatewayTests
         var checkpointer = MemoryCheckpointer();
 
         var graph = new WorkflowGraph<TestState>()
-            .AddNode("assistant", async (state, context, _, _) =>
+            .AddNode("assistant", async (state, context, _, config) =>
             {
                 var parentId = state.Messages.Count > 0 ? state.Messages[^1].Id : null;
-                var message = await context.Gateway.CreateAssistantMessageAsync(parentId, CancellationToken.None);
+                if (parentId != null)
+                    config.Configurable["parent_message_id"] = parentId;
+                var message = await context.Gateway.CreateAssistantMessageAsync(config, "", CancellationToken.None);
                 state.Messages.Add(message);
 
-                await context.Gateway.StreamChunkAsync(message.Id, "Hello");
-                await context.Gateway.StreamChunkAsync(message.Id, " ");
-                await context.Gateway.StreamChunkAsync(message.Id, "world");
+                await context.Gateway.StreamChunkAsync(config, message.Id, "Hello");
+                await context.Gateway.StreamChunkAsync(config, message.Id, " ");
+                await context.Gateway.StreamChunkAsync(config, message.Id, "world");
 
                 message.Content = "Hello world";
-                await context.Gateway.NotifyStreamEndAsync(message.Id, message.Content);
+                await context.Gateway.NotifyStreamEndAsync(config, message.Id, message.Content);
 
                 state.Flow = "done";
                 return WorkflowCommand<TestState>.Create(
@@ -132,13 +135,15 @@ public class GatewayTests
         var checkpointer = MemoryCheckpointer();
 
         var graph = new WorkflowGraph<TestState>()
-            .AddNode("assistant", async (state, context, _, _) =>
+            .AddNode("assistant", async (state, context, _, config) =>
             {
                 var parentId = state.Messages.Count > 0 ? state.Messages[^1].Id : null;
-                var message = await context.Gateway.CreateAssistantMessageAsync(parentId, CancellationToken.None);
+                if (parentId != null)
+                    config.Configurable["parent_message_id"] = parentId;
+                var message = await context.Gateway.CreateAssistantMessageAsync(config, "", CancellationToken.None);
                 state.Messages.Add(message);
                 message.Content = "Reply";
-                await context.Gateway.NotifyStreamEndAsync(message.Id, message.Content);
+                await context.Gateway.NotifyStreamEndAsync(config, message.Id, message.Content);
                 return WorkflowCommand<TestState>.Create(gotoNode: WorkflowEdges.End, update: state);
             })
             .AddEdge(WorkflowEdges.Start, "assistant")
@@ -160,18 +165,19 @@ public class GatewayTests
     public async Task DefaultWorkflowRunGateway_WithoutCallback_CreatesNewGuid_StreamNoOp_NotifyNoOp()
     {
         var gateway = new DefaultWorkflowRunGateway(legacyChunkCallback: null);
-        var msg1 = await gateway.CreateAssistantMessageAsync(null);
-        var msg2 = await gateway.CreateAssistantMessageAsync("parent-1");
+        var config = new WorkflowRunnableConfig { Configurable = new Dictionary<string, object>() };
+        var msg1 = await gateway.CreateAssistantMessageAsync(config);
+        var msg2 = await gateway.CreateAssistantMessageAsync(config, content: "x");
 
         Assert.NotNull(msg1.Id);
         Assert.NotEqual(Guid.Empty, Guid.Parse(msg1.Id));
         Assert.NotNull(msg2.Id);
         Assert.NotEqual(msg1.Id, msg2.Id);
         Assert.True(string.IsNullOrEmpty(msg1.Content));
-        Assert.True(string.IsNullOrEmpty(msg2.Content));
+        Assert.Equal("x", msg2.Content);
 
-        await gateway.StreamChunkAsync("any-id", "chunk");
-        await gateway.NotifyStreamEndAsync("any-id", "full");
+        await gateway.StreamChunkAsync(config, "any-id", "chunk");
+        await gateway.NotifyStreamEndAsync(config, "any-id", "full");
         // No exception, no-op
     }
 
@@ -181,9 +187,10 @@ public class GatewayTests
         var chunks = new List<string>();
         Func<string, Task> legacy = (chunk) => { chunks.Add(chunk); return Task.CompletedTask; };
         var gateway = new DefaultWorkflowRunGateway(legacy);
+        var config = new WorkflowRunnableConfig { Configurable = new Dictionary<string, object>() };
 
-        await gateway.StreamChunkAsync("message-99", "a");
-        await gateway.StreamChunkAsync("message-99", "b");
+        await gateway.StreamChunkAsync(config, "message-99", "a");
+        await gateway.StreamChunkAsync(config, "message-99", "b");
 
         Assert.Equal(2, chunks.Count);
         Assert.Equal("a", chunks[0]);
@@ -199,12 +206,12 @@ public class GatewayTests
         var logger = NullLogger<WorkflowController>.Instance;
 
         var graph = new WorkflowGraph<TestState>()
-            .AddNode("n", async (state, context, _, _) =>
+            .AddNode("n", async (state, context, _, config) =>
             {
-                var msg = await context.Gateway.CreateAssistantMessageAsync(null);
+                var msg = await context.Gateway.CreateAssistantMessageAsync(config, "");
                 state.Messages.Add(msg);
                 msg.Content = "ok";
-                await context.Gateway.NotifyStreamEndAsync(msg.Id, msg.Content);
+                await context.Gateway.NotifyStreamEndAsync(config, msg.Id, msg.Content);
                 return WorkflowCommand<TestState>.Create(gotoNode: WorkflowEdges.End, update: state);
             })
             .AddEdge(WorkflowEdges.Start, "n")
@@ -256,12 +263,12 @@ public class GatewayTests
         var logger = NullLogger<WorkflowController>.Instance;
 
         var graph = new WorkflowGraph<TestState>()
-            .AddNode("n", async (state, context, _, _) =>
+            .AddNode("n", async (state, context, _, config) =>
             {
-                var msg = await context.Gateway.CreateAssistantMessageAsync(null);
+                var msg = await context.Gateway.CreateAssistantMessageAsync(config, "");
                 state.Messages.Add(msg);
                 msg.Content = "from-default";
-                await context.Gateway.NotifyStreamEndAsync(msg.Id, msg.Content);
+                await context.Gateway.NotifyStreamEndAsync(config, msg.Id, msg.Content);
                 return WorkflowCommand<TestState>.Create(gotoNode: WorkflowEdges.End, update: state);
             })
             .AddEdge(WorkflowEdges.Start, "n")

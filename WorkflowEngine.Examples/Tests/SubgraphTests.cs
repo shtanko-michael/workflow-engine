@@ -209,8 +209,9 @@ public class SubgraphTests
 
         Assert.False(result1.WorkflowCompleted);
         Assert.Equal("sub", result1.InterruptCaller);
+        Assert.NotNull(result1.LastCheckpointId);
 
-        var resumeConfig = BaseConfig("t3", null);
+        var resumeConfig = BaseConfig("t3", null, result1.LastCheckpointId);
         var humanMessage = new HumanMessage { Id = "msg1", Content = "user reply" };
         var resumeCommand = WorkflowCommand<TestState>.Create(resume: humanMessage);
         var result2 = await parent.InvokeAsync(resumeCommand, resumeConfig);

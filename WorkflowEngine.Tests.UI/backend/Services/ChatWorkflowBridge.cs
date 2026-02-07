@@ -29,23 +29,25 @@ public sealed class ChatWorkflowBridge : IWorkflowRunGateway
         _hub = hub ?? throw new ArgumentNullException(nameof(hub));
     }
 
-    public async Task<AIMessage> CreateAssistantMessageAsync(WorkflowRunnableConfig config, string? parentMessageId = null, string content = "", CancellationToken cancellationToken = default)
+    public async Task<AIMessage> CreateAssistantMessageAsync(WorkflowRunnableConfig config, string content = "", CancellationToken cancellationToken = default)
     {
+        var conv = await _convRepo.GetByIdAsync(_conversationId);
         var entity = await _messageRepo.CreateMessageAsync(
             _conversationId,
-            parentMessageId,
+            conv.ActiveLeafMessageId,
             "assistant",
             content,
             config.CheckpointId,
             config.LastMessageId,
             config.CheckpointNs);
 
-        await _convRepo.SetActiveLeafId(_conversationId, entity.Id);
+        conv.ActiveLeafMessageId = entity.Id;
+        await _convRepo.UpdateAsync(conv);
 
         return new AIMessage
         {
             Id = entity.Id,
-            Content = string.Empty
+            Content = content
         };
     }
 

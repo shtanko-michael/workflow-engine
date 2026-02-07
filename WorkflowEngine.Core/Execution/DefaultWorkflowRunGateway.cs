@@ -14,7 +14,7 @@ public sealed class DefaultWorkflowRunGateway : IWorkflowRunGateway
         _legacyChunkCallback = legacyChunkCallback;
     }
 
-    public Task<AIMessage> CreateAssistantMessageAsync(WorkflowRunnableConfig config, string? parentMessageId = null, string content = "", CancellationToken cancellationToken = default)
+    public Task<AIMessage> CreateAssistantMessageAsync(WorkflowRunnableConfig config, string content = "", CancellationToken cancellationToken = default)
     {
         var message = new AIMessage
         {

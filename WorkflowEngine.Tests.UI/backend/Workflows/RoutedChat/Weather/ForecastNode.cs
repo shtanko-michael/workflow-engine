@@ -17,8 +17,7 @@ public static class ForecastNode
     {
         return WithContextNode.Wrap<WeatherSubState>("forecast", async (state, context, errorHandler, config) =>
         {
-            var parentId = state.Messages.Count > 0 ? state.Messages[^1].Id : null;
-            var message = await context.Gateway.CreateAssistantMessageAsync(config, parentId, "", CancellationToken.None);
+            var message = await context.Gateway.CreateAssistantMessageAsync(config, "", CancellationToken.None);
             state.Messages.Add(message);
 
             var city = state.City ?? "Unknown";

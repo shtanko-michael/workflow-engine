@@ -44,4 +44,6 @@ public interface IMessageRepository
     // Task UpdateActiveLeafAsync(string conversationId, string leafMessageId);
 
     Task UpdateContentAsync(string messageId, string content);
+
+    Task UpdateCheckpointAsync(string messageId, string checkpointId);
 }

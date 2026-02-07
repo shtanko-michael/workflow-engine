@@ -147,4 +147,15 @@ public class MessageRepository : IMessageRepository
         _context.Messages.Update(msg);
         await _context.SaveChangesAsync();
     }
+
+    public async Task UpdateCheckpointAsync(string messageId, string checkpointId)
+    {
+        var msg = await _context.Messages.FirstOrDefaultAsync(m => m.Id == messageId);
+        if (msg == null)
+            throw new InvalidOperationException($"Message {messageId} not found");
+
+        msg.CheckpointId = checkpointId;
+        _context.Messages.Update(msg);
+        await _context.SaveChangesAsync();
+    }
 }

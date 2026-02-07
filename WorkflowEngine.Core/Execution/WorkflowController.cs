@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using WorkflowEngine.Core.Commands;
+using WorkflowEngine.Core.Extensions;
 using WorkflowEngine.Core.Persistence;
 using WorkflowEngine.Core.Registry;
 using WorkflowEngine.Core.State;
@@ -91,7 +92,9 @@ public class WorkflowController
         runnableConfig.ThreadId = config.ThreadId;
         if (!string.IsNullOrWhiteSpace(config.CheckpointId))
             runnableConfig.CheckpointId = config.CheckpointId;
-        runnableConfig.CheckpointNs = !string.IsNullOrWhiteSpace(config.CheckpointNs) ? config.CheckpointNs : Guid.NewGuid().ToString();
+        runnableConfig.CheckpointNs = !string.IsNullOrWhiteSpace(config.CheckpointNs)
+            ? config.CheckpointNs
+            : config.WorkflowType + "-" + Guid.NewGuid().ToShortGuid();
 
         return runnableConfig;
     }

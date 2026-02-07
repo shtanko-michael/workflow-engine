@@ -1,6 +1,7 @@
 using WorkflowEngine.Core.Commands;
 using WorkflowEngine.Core.Exceptions;
 using WorkflowEngine.Core.Execution;
+using WorkflowEngine.Core.Extensions;
 using WorkflowEngine.Core.State;
 
 namespace WorkflowEngine.Core.Graph;
@@ -28,52 +29,36 @@ public static class SubgraphAsNode
         if (nodeName.Contains(':'))
             throw new ArgumentException("Node name cannot contain ':' (reserved for checkpoint namespace).", nameof(nodeName));
 
-        return async (state, _, _, config) =>
+        return async (state, _, _, parentConfig) =>
         {
-            var childConfig = BuildChildConfig(config, nodeName);
-            var parentCommand = config.Configurable.TryGetValue(WorkflowConfigKeys.WorkflowCommandKey, out var cmdObj)
+            var childConfig = BuildChildConfig(parentConfig, nodeName);
+            var parentCommand = parentConfig.Configurable.TryGetValue(WorkflowConfigKeys.WorkflowCommandKey, out var cmdObj)
                 ? cmdObj as WorkflowCommand<TState>
                 : null;
             var commandToChild = WorkflowCommand<TState>.Create(
                 update: state,
                 resume: parentCommand?.Resume);
+            // remove parent's command
+            parentConfig.Configurable.Remove(WorkflowConfigKeys.WorkflowCommandKey);
 
             var childState = await subgraph.InvokeAsync(commandToChild, childConfig);
 
             if (childState.WorkflowCompleted)
             {
-                // prevent merging the subgraph complete flag into the parent state
-                // childState.WorkflowCompleted = false;
-                return WorkflowCommand<TState>.Create(update: childState);
+                parentConfig.SubgraphCheckpointId = null;
+                parentConfig.SubgraphCheckpointNs = null;
+                return WorkflowCommand<TState>.Create(update: null);
             }
 
-            if (childState.InterruptReason == WorkflowInterruptReason.AskHuman && !string.IsNullOrEmpty(state.InterruptCaller))
+            if (childState.InterruptReason == WorkflowInterruptReason.AskHuman && !string.IsNullOrEmpty(childState.InterruptCaller))
+            {
+                // store subgrapg data in parent config
+                parentConfig.SubgraphCheckpointId = childState.LastCheckpointId;
+                parentConfig.SubgraphCheckpointNs = childConfig.CheckpointNs;
                 throw new SubgraphWorkflowInterruptException(childState.InterruptCaller, nodeName);
+            }
 
-            return WorkflowCommand<TState>.Create(update: childState);
-            // return SubGraphWorkflowCommand<TSubState, TParentState>.Create(childState);
-        };
-    }
-
-    private static WorkflowRunnableConfig BuildChildConfig(WorkflowRunnableConfig config, string nodeName)
-    {
-        var parentNs = config.Configurable.TryGetValue("checkpoint_ns", out var ns)
-            ? ns?.ToString() ?? string.Empty
-            : string.Empty;
-        var childNs = string.IsNullOrEmpty(parentNs)
-            ? nodeName
-            : parentNs + ":" + nodeName;
-
-        var configurable = new Dictionary<string, object>(config.Configurable)
-        {
-            ["checkpoint_ns"] = config.SubgraphCheckpointNs ?? childNs,
-            // Parent checkpoint_id does not apply to child namespaces.
-            ["checkpoint_id"] = config.SubgraphCheckpointId,
-        };
-        return new WorkflowRunnableConfig
-        {
-            Configurable = configurable,
-            Context = config.Context
+            return SubGraphWorkflowCommand<TState, TState>.Create(update: null);
         };
     }
 
@@ -119,17 +104,41 @@ public static class SubgraphAsNode
                 parentConfig.SubgraphCheckpointId = null;
                 parentConfig.SubgraphCheckpointNs = null;
                 var merged = completeStateMapping(parentState, childState);
-                // return WorkflowCommand<TParentState>.Create(update: merged);
                 return SubGraphWorkflowCommand<TSubState, TParentState>.Create(childState, update: merged);
             }
 
-            parentConfig.SubgraphCheckpointId = childState.LastCheckpointId;
-            parentConfig.SubgraphCheckpointNs = childConfig.CheckpointNs;
-
-            if (!string.IsNullOrEmpty(childState.InterruptCaller))
+            if (childState.InterruptReason == WorkflowInterruptReason.AskHuman && !string.IsNullOrEmpty(childState.InterruptCaller))
+            {
+                // store subgrapg data in parent config
+                parentConfig.SubgraphCheckpointId = childState.LastCheckpointId;
+                parentConfig.SubgraphCheckpointNs = childConfig.CheckpointNs;
                 throw new SubgraphWorkflowInterruptException(childState.InterruptCaller, nodeName);
+            }
 
             return SubGraphWorkflowCommand<TSubState, TParentState>.Create(childState, update: null);
+        };
+    }
+
+    private static WorkflowRunnableConfig BuildChildConfig(WorkflowRunnableConfig parentConfig, string nodeName)
+    {
+        var parentNs = parentConfig.Configurable.TryGetValue(WorkflowConfigKeys.CheckpointNs, out var ns)
+            ? ns?.ToString() ?? string.Empty
+            : string.Empty;
+        var childNs = parentConfig.SubgraphCheckpointNs ?? string.Empty;
+        if (string.IsNullOrEmpty(childNs))
+            childNs = parentNs + ":" + nodeName + "-" + Guid.NewGuid().ToShortGuid();
+
+        var configurable = new Dictionary<string, object>(parentConfig.Configurable)
+        {
+            [WorkflowConfigKeys.CheckpointNs] = childNs,
+            // Parent checkpoint_id does not apply to child namespaces.
+            [WorkflowConfigKeys.CheckpointId] = parentConfig.SubgraphCheckpointId,
+        };
+        configurable.Remove(WorkflowConfigKeys.ParentCheckpointId);
+        return new WorkflowRunnableConfig
+        {
+            Configurable = configurable,
+            Context = parentConfig.Context
         };
     }
 }

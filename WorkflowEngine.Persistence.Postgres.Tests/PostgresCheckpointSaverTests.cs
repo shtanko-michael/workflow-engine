@@ -733,8 +733,14 @@ public class PostgresCheckpointSaverTests
             GetCurrentNode(nodeValue) == "sub");
         Assert.NotNull(parentInterrupt);
 
+        // Child namespace is now "sub-<guid>", read from parent checkpoint
+        var childNs = parentInterrupt!.Checkpoint.ChannelValues.TryGetValue(WorkflowConfigKeys.SubgraphCheckpointNs, out var nsObj)
+            ? nsObj?.ToString()
+            : null;
+        Assert.NotNull(childNs);
+
         var childConfig = CloneConfig(baseConfig);
-        childConfig.Configurable["checkpoint_ns"] = "sub";
+        childConfig.Configurable["checkpoint_ns"] = childNs;
         var childCheckpoints = new List<CheckpointTuple>();
         await foreach (var item in checkpointer.ListAsync(childConfig))
         {
@@ -747,6 +753,7 @@ public class PostgresCheckpointSaverTests
         Assert.NotNull(childInterrupt);
 
         var resumeConfig = CloneConfig(baseConfig);
+        resumeConfig.Configurable["checkpoint_id"] = firstRun.LastCheckpointId;
         var resume = new HumanMessage { Content = "ok" };
         var finished = await parent.InvokeAsync(
             WorkflowCommand<SubgraphState>.Create(resume: resume),

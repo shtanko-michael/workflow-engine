@@ -18,7 +18,7 @@ public static class WelcomeNode
         return WithContextNode.Wrap<RoutedChatState>("welcome", async (state, context, errorHandler, config) =>
         {
             var parentId = state.Messages.Count > 0 ? state.Messages[^1].Id : null;
-            var message = await context.Gateway.CreateAssistantMessageAsync(config, parentId, "", CancellationToken.None);
+            var message = await context.Gateway.CreateAssistantMessageAsync(config, "", CancellationToken.None);
             state.Messages.Add(message);
 
             var request = new LLMRequest

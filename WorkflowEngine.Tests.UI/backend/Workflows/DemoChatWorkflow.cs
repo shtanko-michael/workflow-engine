@@ -15,8 +15,7 @@ public static class DemoChatWorkflow
         var workflow = new WorkflowGraph<DemoChatState>()
             .AddNode("start", async (state, ctx, errorHandler, cfg) =>
             {
-                var parentId = state.Messages.Count > 0 ? state.Messages[^1].Id : null;
-                var message = await ctx.Gateway.CreateAssistantMessageAsync(cfg, parentId, "", CancellationToken.None);
+                var message = await ctx.Gateway.CreateAssistantMessageAsync(cfg, "", CancellationToken.None);
                 message.Content = "Hello! This is a demo workflow. Ask me anything or type \"bye\" to finish.";
                 state.Messages.Add(message);
                 await ctx.Gateway.NotifyStreamEndAsync(cfg, message.Id, message.Content);
@@ -31,8 +30,7 @@ public static class DemoChatWorkflow
                 var content = lastHuman?.Content?.Trim() ?? string.Empty;
                 state.LastUserMessage = content;
 
-                var parentId = state.Messages.Count > 0 ? state.Messages[^1].Id : null;
-                var message = await ctx.Gateway.CreateAssistantMessageAsync(cfg, parentId, "", CancellationToken.None);
+                var message = await ctx.Gateway.CreateAssistantMessageAsync(cfg, "", CancellationToken.None);
                 state.Messages.Add(message);
 
                 if (string.Equals(content, "bye", StringComparison.OrdinalIgnoreCase))

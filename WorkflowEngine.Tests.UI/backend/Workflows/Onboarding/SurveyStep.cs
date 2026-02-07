@@ -60,8 +60,7 @@ public static class SurveyStep
         }
 
         var questionToUser = output.QuestionToUser?.Trim() ?? "NO DATA";
-        var parentId = state.Messages.Count > 0 ? state.Messages[^1].Id : null;
-        var message = await context.Gateway.CreateAssistantMessageAsync(config, parentId, questionToUser, CancellationToken.None);
+        var message = await context.Gateway.CreateAssistantMessageAsync(config, questionToUser, CancellationToken.None);
         message.Content = questionToUser;
         state.Messages.Add(message);
         await context.Gateway.NotifyStreamEndAsync(config, message.Id, message.Content);

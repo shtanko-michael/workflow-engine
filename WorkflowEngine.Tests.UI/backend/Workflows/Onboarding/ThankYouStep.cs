@@ -19,8 +19,7 @@ public static class ThankYouStep
         WorkflowRunnableConfig config,
         IServiceScopeFactory scopeFactory)
     {
-        var parentId = state.Messages.Count > 0 ? state.Messages[^1].Id : null;
-        var message = await context.Gateway.CreateAssistantMessageAsync(config, parentId, "", CancellationToken.None);
+        var message = await context.Gateway.CreateAssistantMessageAsync(config, "", CancellationToken.None);
         state.Messages.Add(message);
 
         var summary = $"Job: {state.OnboardingJob ?? "—"}, Industry: {state.OnboardingSphere ?? "—"}, Team size: {state.OnboardingEmployees?.ToString() ?? "—"}.";

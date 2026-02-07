@@ -109,20 +109,24 @@ public class ChatWorkflowServiceNew
         if (!string.Equals(conversation.LastCheckpointId, checkpointId, StringComparison.Ordinal))
             throw new InvalidOperationException("Checkpoint mismatch");
 
-        var branch = await _messageRepo.GetBranchToLeafAsync(conversationId, conversation.ActiveLeafMessageId);
-        var lastMessage = branch.LastOrDefault();
-        if (lastMessage == null)
-            throw new InvalidOperationException("No active branch found");
+        // var branch = await _messageRepo.GetBranchToLeafAsync(conversationId, conversation.ActiveLeafMessageId);
+        // var lastMessage = branch.LastOrDefault();
+        // if (lastMessage == null)
+        //     throw new InvalidOperationException("No active branch found");
 
-        var checkpointNs = ResolveCheckpointNamespace(lastMessage);
+        var activeMessage = await _messageRepo.GetMessageAsync(conversation.ActiveLeafMessageId);
+
         var userMessage = await _messageRepo.CreateMessageAsync(
             conversationId,
-            lastMessage.Id,
+            activeMessage.Id,
             "user",
             content,
             checkpointId,
             conversation.LastInterruptRequestId,
-            checkpointNs);
+            activeMessage.CheckpointNs);
+        
+        conversation.ActiveLeafMessageId = userMessage.Id;
+        await _conversationRepo.UpdateAsync(conversation);
 
         var humanMessage = new HumanMessage
         {
@@ -137,7 +141,7 @@ public class ChatWorkflowServiceNew
             {
                 using var scope = _scopeFactory.CreateScope();
                 var scopedService = scope.ServiceProvider.GetRequiredService<ChatWorkflowServiceNew>();
-                await scopedService.ProcessWorkflowAsync(conversationId, humanMessage, checkpointId, checkpointNs, userMessage.Id);
+                await scopedService.ProcessWorkflowAsync(conversationId, humanMessage, checkpointId, activeMessage.CheckpointNs, userMessage.Id);
             }
             catch (Exception ex)
             {
@@ -236,19 +240,8 @@ public class ChatWorkflowServiceNew
         };
 
         var state = await RunWorkflowAsync(conversation.ThreadId!, conversation.WorkflowType!, humanMessage, parentCheckpointId, branchCheckpointNs, conversationId, requestId);
-        var latestCheckpointId = state.LastCheckpointId;
-        // var lastMessageId = GetLastMessageIdFromState(state);
-        // if (!string.IsNullOrWhiteSpace(lastMessageId))
-        // {
-        //     conversation.ActiveLeafMessageId = lastMessageId;
-        // }
-
-        conversation.LastInterruptRequestId = state.InterruptRequestId;
-        conversation.LastCheckpointId = latestCheckpointId;
-        await _conversationRepo.UpdateAsync(conversation);
-
-        await BroadcastDialogUpdatedAsync(conversation);
-        await BroadcastMessagesUpdatedAsync(conversationId);
+        await FinalizeWorkflowProcessingAsync(conversationId, state);
+        
     }
 
     public async Task SwitchVersionAsync(string conversationId, string messageId)
@@ -266,11 +259,9 @@ public class ChatWorkflowServiceNew
             throw new InvalidOperationException("Failed to find leaf of branch");
 
         conversation.ActiveLeafMessageId = leaf.Id;
-        var branch = await _messageRepo.GetBranchToLeafAsync(conversationId, leaf.Id);
-        var lastInBranch = branch.LastOrDefault();
-        if (!string.IsNullOrEmpty(lastInBranch?.CheckpointId))
+        if (!string.IsNullOrEmpty(leaf.CheckpointId))
         {
-            conversation.LastCheckpointId = lastInBranch.CheckpointId;
+            conversation.LastCheckpointId = leaf.CheckpointId;
         }
         await _conversationRepo.UpdateAsync(conversation);
 
@@ -287,30 +278,7 @@ public class ChatWorkflowServiceNew
         await Task.Delay(500).ConfigureAwait(false);
 
         var state = await RunWorkflowAsync(threadId, workflowId, null, null, null, conversationId, null);
-        var conversation = await _conversationRepo.GetByIdAsync(conversationId);
-        if (conversation == null)
-        {
-            _logger.LogWarning("Conversation {ConversationId} not found after workflow run", conversationId);
-            return;
-        }
-
-        // var latestCheckpointId = state.LastCheckpointId;
-        // var lastMessageId = GetLastMessageIdFromState(state);
-        // if (!string.IsNullOrWhiteSpace(lastMessageId))
-        // {
-        //     conversation.ActiveLeafMessageId = lastMessageId;
-        //     // if (!string.IsNullOrWhiteSpace(latestCheckpointId))
-        //     // {
-        //     //     await EnsureCheckpointNamespaceSeedAsync(threadId, latestCheckpointId, null, lastMessageId);
-        //     // }
-        // }
-
-        conversation.LastInterruptRequestId = state.InterruptRequestId;
-        conversation.LastCheckpointId = state.LastCheckpointId;
-        await _conversationRepo.UpdateAsync(conversation);
-
-        await BroadcastDialogUpdatedAsync(conversation);
-        await BroadcastMessagesUpdatedAsync(conversationId);
+        await FinalizeWorkflowProcessingAsync(conversationId, state);
     }
 
     private async Task ProcessWorkflowAsync(
@@ -328,19 +296,7 @@ public class ChatWorkflowServiceNew
         }
 
         var state = await RunWorkflowAsync(conversation.ThreadId!, conversation.WorkflowType!, humanMessage, checkpointId, checkpointNs, conversationId, conversation.LastInterruptRequestId);
-        var latestCheckpointId = state.LastCheckpointId;
-        // var lastMessageId = GetLastMessageIdFromState(state);
-        // if (!string.IsNullOrWhiteSpace(lastMessageId))
-        // {
-        //     conversation.ActiveLeafMessageId = lastMessageId;
-        // }
-
-        conversation.LastInterruptRequestId = state.InterruptRequestId;
-        conversation.LastCheckpointId = latestCheckpointId;
-        await _conversationRepo.UpdateAsync(conversation);
-
-        await BroadcastDialogUpdatedAsync(conversation);
-        await BroadcastMessagesUpdatedAsync(conversationId);
+        await FinalizeWorkflowProcessingAsync(conversationId, state);
     }
 
     /// <summary>
@@ -392,9 +348,20 @@ public class ChatWorkflowServiceNew
         };
     }
 
-    private static string? ResolveCheckpointNamespace(MessageEntity message)
+    private async Task FinalizeWorkflowProcessingAsync(string conversationId, WorkflowStateBase state)
     {
-        return !string.IsNullOrWhiteSpace(message.CheckpointNs) ? message.CheckpointNs : null;
+        var conversation = await _conversationRepo.GetByIdAsync(conversationId);
+        if (conversation == null)
+            throw new InvalidOperationException("Conversation not found");
+
+        await _messageRepo.UpdateCheckpointAsync(conversation.ActiveLeafMessageId, state.LastCheckpointId);
+
+        conversation.LastInterruptRequestId = state.InterruptRequestId;
+        conversation.LastCheckpointId = state.LastCheckpointId;
+        await _conversationRepo.UpdateAsync(conversation);
+
+        await BroadcastDialogUpdatedAsync(conversation);
+        await BroadcastMessagesUpdatedAsync(conversationId);
     }
 
     // private async Task EnsureCheckpointNamespaceSeedAsync(
