@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using WorkflowEngine.Core.Execution;
+using WorkflowEngine.Core.Persistence;
 using WorkflowEngine.Core.Registry;
 
 namespace WorkflowEngine.Core.Extensions;
@@ -16,6 +17,11 @@ public static class ServiceCollectionExtensions
     {
         services.AddSingleton<WorkflowRegistry>();
         services.AddScoped<WorkflowController>();
+        services.AddScoped<ICheckpointSaverFactory>(sp =>
+        {
+            var serviceProvider = sp.GetRequiredService<IServiceProvider>();
+            return new CheckpointSaverFactory(serviceProvider);
+        });
         return services;
     }
 }

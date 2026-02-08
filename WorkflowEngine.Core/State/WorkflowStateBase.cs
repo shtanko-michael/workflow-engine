@@ -1,7 +1,12 @@
-using System.Drawing;
 using System.Text.Json.Serialization;
 
 namespace WorkflowEngine.Core.State;
+
+public enum WorkflowInterruptReason
+{
+    AskHuman = 0,
+    Error = 1,
+}
 
 /// <summary>
 /// Base class for all workflow states
@@ -9,8 +14,8 @@ namespace WorkflowEngine.Core.State;
 public class WorkflowStateBase
 {
     public List<WorkflowMessage> Messages { get; set; } = new();
-    public string? WelcomePromptContext { get; set; }
     public string? InterruptCaller { get; set; }
+    public WorkflowInterruptReason? InterruptReason { get; set; }
     public string? InterruptRequestId { get; set; }
     public string? LastCheckpointId { get; set; }
     public bool WorkflowCompleted { get; set; }

@@ -45,7 +45,7 @@ public class MemoryCheckpointSaver : ICheckpointSaver
         var key = GetCheckpointKey(config);
         var checkpointId = checkpoint.Id;
         
-        // Store checkpoint
+        // Store checkpoint; ParentConfig points to parent (use ParentCheckpointId, not current checkpoint_id)
         var tuple = new CheckpointTuple
         {
             Config = new WorkflowRunnableConfig
@@ -58,10 +58,13 @@ public class MemoryCheckpointSaver : ICheckpointSaver
             },
             Checkpoint = checkpoint,
             Metadata = metadata,
-            ParentConfig = config.Configurable.ContainsKey("checkpoint_id")
+            ParentConfig = !string.IsNullOrEmpty(config.ParentCheckpointId)
                 ? new WorkflowRunnableConfig
                 {
-                    Configurable = new Dictionary<string, object>(config.Configurable),
+                    Configurable = new Dictionary<string, object>(config.Configurable)
+                    {
+                        ["checkpoint_id"] = config.ParentCheckpointId
+                    },
                     Context = config.Context
                 }
                 : null

@@ -21,7 +21,7 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
     private readonly Dictionary<string, WorkflowNode<TState>> _nodes;
     private readonly List<WorkflowEdge> _edges;
     private readonly Dictionary<string, List<string>> _nodeEnds;
-    private readonly ICheckpointSaver _checkpointer;
+    private readonly ICheckpointSaverFactory _checkpointerFactory;
     private readonly ILogger? _logger;
     private readonly JsonSerializerOptions _jsonOptions;
 
@@ -29,13 +29,13 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
         Dictionary<string, WorkflowNode<TState>> nodes,
         List<WorkflowEdge> edges,
         Dictionary<string, List<string>> nodeEnds,
-        ICheckpointSaver checkpointer,
+        ICheckpointSaverFactory checkpointerFactory,
         ILogger? logger = null)
     {
         _nodes = nodes ?? throw new ArgumentNullException(nameof(nodes));
         _edges = edges ?? throw new ArgumentNullException(nameof(edges));
         _nodeEnds = nodeEnds ?? throw new ArgumentNullException(nameof(nodeEnds));
-        _checkpointer = checkpointer ?? throw new ArgumentNullException(nameof(checkpointer));
+        _checkpointerFactory = checkpointerFactory ?? throw new ArgumentNullException(nameof(_checkpointerFactory));
         _logger = logger;
         _jsonOptions = new JsonSerializerOptions
         {
@@ -59,6 +59,8 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
         if (config.Context == null)
             throw new ArgumentException("Context is required", nameof(config));
 
+        // store command in config for nodes to access
+        config.Configurable[WorkflowConfigKeys.WorkflowCommandKey] = command;
 
         var (state, resumeNode) = await GetOrCreateStateAsync(config, command);
         if (state.WorkflowCompleted)
@@ -76,6 +78,9 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
 
         try
         {
+            config.ParentCheckpointId = config.CheckpointId;
+            // initially set next checkpoint id to be able to send proper checkpoint id to gateway
+            config.CheckpointId = Guid.NewGuid().ToString();
             while (currentNode != null && currentNode != WorkflowEdges.End)
             {
                 _logger?.LogDebug("Executing node: {NodeName}", currentNode);
@@ -126,7 +131,23 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
 
             // var interruptResumeNode = state.InterruptCaller ?? currentNode;
             state.InterruptRequestId = interruptEx.RequestId;
-            state.InterruptCaller = interruptEx.ReturnToNode;
+            state.InterruptCaller = interruptEx.Caller;
+            state.InterruptReason = WorkflowInterruptReason.AskHuman;
+            // save checkpoint at the node that interrupted the workflow basically AskHuman node
+            await SaveCheckpointAsync(config, state, WorkflowEdges.AskHuman);
+
+            // Return current state - workflow will resume later
+            return state;
+        }
+        catch (SubgraphWorkflowInterruptException interruptEx)
+        {
+            _logger?.LogInformation("Subgraph workflow interrupted: {Message}", interruptEx.Message);
+
+            // var interruptResumeNode = state.InterruptCaller ?? currentNode;
+            state.InterruptRequestId = interruptEx.RequestId;
+            state.InterruptCaller = interruptEx.Caller;
+            state.InterruptReason = WorkflowInterruptReason.AskHuman;
+            // save checkpoint at the subgraph node that interrupted the parent
             await SaveCheckpointAsync(config, state, state.InterruptCaller);
 
             // Return current state - workflow will resume later
@@ -141,7 +162,8 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
         WorkflowRunnableConfig config,
         WorkflowCommand<TState> command)
     {
-        var checkpoint = await _checkpointer.GetAsync(config);
+        var checkpointer = await _checkpointerFactory.Build();
+        var checkpoint = await checkpointer.GetAsync(config);
         #region agent log
         DebugLog(
             location: "CompiledWorkflowGraph.GetOrCreateStateAsync",
@@ -155,6 +177,8 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
             // Restore state from checkpoint
             var restoredState = TryGetStateFromCheckpoint(checkpoint.Checkpoint);
             var resumeNode = TryGetStringChannel(checkpoint.Checkpoint, CurrentNodeChannel);
+            config.SubgraphCheckpointId = TryGetStringChannel(checkpoint.Checkpoint, "subgraph_checkpoint_id");
+            config.SubgraphCheckpointNs = TryGetStringChannel(checkpoint.Checkpoint, "subgraph_checkpoint_ns");
             if (restoredState != null)
             {
                 #region agent log
@@ -164,25 +188,12 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
                     data: new { resumeNode, restoredType = restoredState.GetType().Name },
                     hypothesisId: "B");
                 #endregion
-                // Apply resume if it's a human message
-                if (command.Resume is HumanMessage restoredResumeMessage && restoredState is WorkflowStateBase restoredResumeBaseState)
-                {
-                    restoredResumeBaseState.Messages.Add(restoredResumeMessage);
-                }
-
                 return (restoredState, resumeNode);
             }
         }
 
         // Create new state
         var newState = command.Update ?? Activator.CreateInstance<TState>();
-
-        // Apply resume if it's a human message
-        if (command.Resume is HumanMessage newResumeMessage && newState is WorkflowStateBase newResumeBaseState)
-        {
-            newResumeBaseState.Messages.Add(newResumeMessage);
-        }
-
         return (newState, null);
     }
 
@@ -217,7 +228,7 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
     {
         var newVersions = new Dictionary<string, string>
         {
-            [StateChannel] = NextVersion()
+            [StateChannel] = NextVersion(),
         };
 
         if (!string.IsNullOrWhiteSpace(currentNode))
@@ -225,15 +236,21 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
             newVersions[CurrentNodeChannel] = NextVersion();
         }
 
+        var cid = config.CheckpointId ?? Guid.NewGuid().ToString();
         var checkpoint = new Checkpoint
         {
-            Id = Guid.NewGuid().ToString(),
+            Id = cid,
             ChannelValues = new Dictionary<string, object>
             {
                 [StateChannel] = state
             },
             ChannelVersions = newVersions
         };
+
+        if (!string.IsNullOrEmpty(config.SubgraphCheckpointId))
+            checkpoint.ChannelValues.Add(WorkflowConfigKeys.SubgraphCheckpointId, config.SubgraphCheckpointId);
+        if (!string.IsNullOrEmpty(config.SubgraphCheckpointNs))
+            checkpoint.ChannelValues.Add(WorkflowConfigKeys.SubgraphCheckpointNs, config.SubgraphCheckpointNs);
 
         if (!string.IsNullOrWhiteSpace(currentNode))
         {
@@ -245,7 +262,13 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
             baseState.LastCheckpointId = checkpoint.Id;
         }
 
-        await _checkpointer.PutAsync(config, checkpoint, new { }, newVersions);
+        var checkpointer = await _checkpointerFactory.Build();
+        await checkpointer.PutAsync(config, checkpoint, new { }, newVersions);
+
+        config.ParentCheckpointId = config.CheckpointId;
+        // Update config so gateways (e.g. bridge) see current checkpoint when creating messages
+        config.CheckpointId = Guid.NewGuid().ToString();
+
         #region agent log
         DebugLog(
             location: "CompiledWorkflowGraph.SaveCheckpointAsync",
@@ -308,7 +331,7 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
             }
 
             return WorkflowCommand<TState>.Create(
-                gotoNode: "errorHandler",
+                gotoNode: WorkflowEdges.ErrorHandler,
                 update: errorState
             );
         };
@@ -359,7 +382,8 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
     /// </summary>
     public async Task<CheckpointTuple?> GetCheckpointAsync(WorkflowRunnableConfig config)
     {
-        return await _checkpointer.GetAsync(config);
+        var checkpointer = await _checkpointerFactory.Build();
+        return await checkpointer.GetAsync(config);
     }
 
     private static void DebugLog(string location, string message, object data, string hypothesisId, string runId = "run1")

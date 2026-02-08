@@ -2,7 +2,6 @@ using Microsoft.Extensions.Logging;
 using System.Text.Json;
 using WorkflowEngine.Core.Commands;
 using WorkflowEngine.Core.Graph;
-using WorkflowEngine.Core.Nodes;
 using WorkflowEngine.Core.State;
 
 namespace WorkflowEngine.Core.Nodes;
@@ -17,7 +16,7 @@ public static class ErrorHandlerNode
     /// </summary>
     public static WorkflowNode<TState> Create<TState>() where TState : WorkflowStateBase
     {
-        return WithContextNode.Wrap<TState>("errorHandler", (state, ctx, errorHandler, config) =>
+        return WithContextNode.Wrap<TState>(WorkflowEdges.ErrorHandler, (state, ctx, errorHandler, config) =>
         {
             // Log error
             ctx.Logger.LogError("Error in workflow: {ErrorName}, Message: {ErrorMessage}", 
@@ -35,7 +34,7 @@ public static class ErrorHandlerNode
             }
             
             return Task.FromResult(WorkflowCommand<TState>.Create(
-                gotoNode: "askHuman",
+                gotoNode: WorkflowEdges.AskHuman,
                 update: updatedState
             ));
         });

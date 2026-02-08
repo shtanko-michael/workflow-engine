@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
 import { apiBase, fetchJson } from './api/client'
 import { useChatConnection } from './hooks/useChatConnection'
 import { Sidebar } from './components/layout/Sidebar'
@@ -8,8 +9,11 @@ import { ChatInput } from './components/chat/ChatInput'
 import type { Dialog, MessageWithVersions } from './types'
 
 function App() {
+  const { dialogId: routeDialogId } = useParams<{ dialogId?: string }>()
+  const navigate = useNavigate()
+  const activeDialogId = routeDialogId ?? null
+
   const [dialogs, setDialogs] = useState<Dialog[]>([])
-  const [activeDialogId, setActiveDialogId] = useState<string | null>(null)
   const [messages, setMessages] = useState<MessageWithVersions[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -20,6 +24,7 @@ function App() {
   const [newDialogTitle, setNewDialogTitle] = useState('')
   const [dialogToDelete, setDialogToDelete] = useState<Dialog | null>(null)
   const [streamingContent, setStreamingContent] = useState('')
+  const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null)
   const skipPendingResetRef = useRef(false)
 
   const { joinDialogNow } = useChatConnection({
@@ -29,6 +34,7 @@ function App() {
     setPendingResponse,
     setLoading,
     setStreamingContent,
+    setStreamingMessageId,
   })
 
   useEffect(() => {
@@ -42,6 +48,7 @@ function App() {
       setMessages([])
       setPendingResponse(false)
       setStreamingContent('')
+      setStreamingMessageId(null)
       return
     }
     fetchJson<MessageWithVersions[]>(
@@ -58,6 +65,7 @@ function App() {
     }
     setPendingResponse(false)
     setStreamingContent('')
+    setStreamingMessageId(null)
   }, [activeDialogId])
 
   const activeDialog = dialogs.find((d) => d.id === activeDialogId) ?? null
@@ -81,10 +89,11 @@ function App() {
       await joinDialogNow(dialog.id)
       setDialogs((prev) => [dialog, ...prev])
       skipPendingResetRef.current = true
-      setActiveDialogId(dialog.id)
+      navigate(`/chat/${dialog.id}`)
       setMessages([])
       setPendingResponse(true)
       setStreamingContent('')
+      setStreamingMessageId(null)
       // Workflow runs in background; messages will arrive via SignalR messagesUpdated / assistantChunk
     } catch (error) {
       console.error(error)
@@ -105,7 +114,7 @@ function App() {
       if (!res.ok) throw new Error(await res.text() || 'Delete failed')
       setDialogs((prev) => prev.filter((d) => d.id !== idToDelete))
       if (activeDialogId === idToDelete) {
-        setActiveDialogId(null)
+        navigate('/')
         setMessages([])
       }
     } catch (error) {
@@ -129,6 +138,7 @@ function App() {
       setMessages(newMessages)
       setPendingResponse(true)
       setStreamingContent('')
+      setStreamingMessageId(null)
       setEditingMessageId(null)
       setEditContent('')
     } catch (error) {
@@ -161,6 +171,7 @@ function App() {
     setLoading(true)
     setPendingResponse(true)
     setStreamingContent('')
+    setStreamingMessageId(null)
     try {
       const newMessage = await fetchJson<MessageWithVersions>(
         `${apiBase}/api/v1/dialogs/${activeDialog.id}/messages`,
@@ -196,7 +207,7 @@ function App() {
         onNewChatTitleChange={setNewDialogTitle}
         onCreateDialog={handleCreateDialog}
         onCancelNewChat={() => setShowScenarioModal(false)}
-        onSelectDialog={setActiveDialogId}
+        onSelectDialog={(id) => navigate(`/chat/${id}`)}
         onDeleteDialogClick={setDialogToDelete}
         onConfirmDeleteDialog={handleConfirmDeleteDialog}
         onCancelDeleteDialog={() => setDialogToDelete(null)}
@@ -215,6 +226,7 @@ function App() {
               messages={messages}
               pendingResponse={pendingResponse}
               streamingContent={streamingContent}
+              streamingMessageId={streamingMessageId}
               editingMessageId={editingMessageId}
               editContent={editContent}
               onEditContentChange={setEditContent}

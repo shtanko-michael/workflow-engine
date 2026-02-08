@@ -15,18 +15,23 @@ public static class AskHumanNode
     /// </summary>
     public static WorkflowNode<TState> Create<TState>() where TState : WorkflowStateBase
     {
-        return WithContextNode.Wrap<TState>("askHuman", (state, ctx, errorHandler, config) =>
+        return WithContextNode.Wrap<TState>(WorkflowEdges.AskHuman, (state, ctx, errorHandler, config) =>
         {
-            // If a human response already exists, return to the caller node
-            var resumeMessage = state.Messages.LastOrDefault();
-            if (resumeMessage is HumanMessage resumeHumanMessage
-            //&& resumeHumanMessage.RequestId == state.InterruptRequestId
+            var hasCommand = config.Configurable.TryGetValue(WorkflowConfigKeys.WorkflowCommandKey, out var command);
+            if (hasCommand
+                && command is WorkflowCommand<TState> workflowCommand
+                && workflowCommand.IsResume
             )
             {
+                // Consume the resume payload so it is not reused in subsequent AskHuman nodes.
+                var resumeMessage = workflowCommand.Resume as HumanMessage;
+                workflowCommand.Resume = null;
                 var returnNode = state.InterruptCaller ?? WorkflowEdges.End;
                 state.InterruptRequestId = null;
                 state.InterruptCaller = null;
-                state.Messages.Add(resumeHumanMessage);
+                state.InterruptReason = null;
+                if (resumeMessage != null)
+                    state.Messages.Add(resumeMessage);
 
                 return Task.FromResult(WorkflowCommand<TState>.Create(
                     gotoNode: returnNode,
@@ -36,7 +41,7 @@ public static class AskHumanNode
 
             var lastMessage = state.Messages.LastOrDefault();
             // Interrupt workflow - throw special exception
-            throw new WorkflowInterruptException(lastMessage?.Id, state.InterruptCaller ?? WorkflowEdges.End);
+            throw new WorkflowInterruptException(lastMessage?.Id ?? "", state.InterruptCaller ?? WorkflowEdges.End);
         });
     }
 }

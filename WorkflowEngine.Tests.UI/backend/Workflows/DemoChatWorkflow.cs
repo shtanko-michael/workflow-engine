@@ -10,43 +10,48 @@ public static class DemoChatWorkflow
 {
     public const string WorkflowId = "demo_chat";
 
-    public static WorkflowDeclaration<ChatWorkflowState> Build()
+    public static WorkflowDeclaration<DemoChatState> Build()
     {
-        var workflow = new WorkflowGraph<ChatWorkflowState>()
-            .AddNode("start", (state, ctx, errorHandler, cfg) =>
+        var workflow = new WorkflowGraph<DemoChatState>()
+            .AddNode("start", async (state, ctx, errorHandler, cfg) =>
             {
-                state.Messages.Add(new AIMessage
-                {
-                    Content = "Hello! This is a demo workflow. Ask me anything or type \"bye\" to finish."
-                });
+                var message = await ctx.Gateway.CreateAssistantMessageAsync(cfg, "", CancellationToken.None);
+                message.Content = "Hello! This is a demo workflow. Ask me anything or type \"bye\" to finish.";
+                state.Messages.Add(message);
+                await ctx.Gateway.NotifyStreamEndAsync(cfg, message.Id, message.Content);
                 state.InterruptCaller = "handleInput";
-                return Task.FromResult(WorkflowCommand<ChatWorkflowState>.Create(
+                return WorkflowCommand<DemoChatState>.Create(
                     gotoNode: WorkflowEdges.AskHuman,
-                    update: state));
+                    update: state);
             })
-            .AddNode("handleInput", (state, ctx, errorHandler, cfg) =>
+            .AddNode("handleInput", async (state, ctx, errorHandler, cfg) =>
             {
                 var lastHuman = state.Messages.LastOrDefault(message => message is HumanMessage) as HumanMessage;
                 var content = lastHuman?.Content?.Trim() ?? string.Empty;
                 state.LastUserMessage = content;
 
+                var message = await ctx.Gateway.CreateAssistantMessageAsync(cfg, "", CancellationToken.None);
+                state.Messages.Add(message);
+
                 if (string.Equals(content, "bye", StringComparison.OrdinalIgnoreCase))
                 {
-                    state.Messages.Add(new AIMessage { Content = "Goodbye! Workflow completed." });
-                    return Task.FromResult(WorkflowCommand<ChatWorkflowState>.Create(
+                    message.Content = "Goodbye! Workflow completed.";
+                    await ctx.Gateway.NotifyStreamEndAsync(cfg, message.Id, message.Content);
+                    return WorkflowCommand<DemoChatState>.Create(
                         gotoNode: WorkflowEdges.End,
-                        update: state));
+                        update: state);
                 }
 
-                state.Messages.Add(new AIMessage { Content = $"You said: {content}" });
-                return Task.FromResult(WorkflowCommand<ChatWorkflowState>.Create(
+                message.Content = $"You said: {content}";
+                await ctx.Gateway.NotifyStreamEndAsync(cfg, message.Id, message.Content);
+                return WorkflowCommand<DemoChatState>.Create(
                     gotoNode: WorkflowEdges.AskHuman,
-                    update: state));
+                    update: state);
             })
-            .AddNode(WorkflowEdges.AskHuman, AskHumanNode.Create<ChatWorkflowState>())
+            .AddNode(WorkflowEdges.AskHuman, AskHumanNode.Create<DemoChatState>())
             .AddEdge(WorkflowEdges.Start, "start");
 
-        return new WorkflowDeclaration<ChatWorkflowState>
+        return new WorkflowDeclaration<DemoChatState>
         {
             Meta = new WorkflowMeta
             {

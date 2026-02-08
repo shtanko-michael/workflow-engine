@@ -7,6 +7,8 @@ type MessageListProps = {
   messages: MessageWithVersions[]
   pendingResponse: boolean
   streamingContent: string
+  /** When set, the message with this id is being streamed (shown in list with optional indicator). */
+  streamingMessageId: string | null
   editingMessageId: string | null
   editContent: string
   onEditContentChange: (value: string) => void
@@ -21,6 +23,7 @@ export function MessageList({
   messages,
   pendingResponse,
   streamingContent,
+  streamingMessageId,
   editingMessageId,
   editContent,
   onEditContentChange,
@@ -32,8 +35,8 @@ export function MessageList({
 }: MessageListProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null)
 
-  // Show streaming bubble whenever we're waiting for a response (including right after creating a dialog)
-  const showStreamingBubble = pendingResponse
+  // Show streaming bubble only when waiting for first chunk (no messageId yet); once we have streamingMessageId, the message is in the list
+  const showStreamingBubble = pendingResponse && !streamingMessageId
 
   useEffect(() => {
     scrollRef.current?.scrollTo({
@@ -63,6 +66,7 @@ export function MessageList({
           onCancelEdit={onCancelEdit}
           onSwitchVersion={onSwitchVersion}
           loading={loading}
+          isStreamingPlaceholder={message.messageId === streamingMessageId}
         />
       ))}
       {showStreamingBubble && (

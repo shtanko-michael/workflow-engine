@@ -5,17 +5,16 @@ using WorkflowEngine.Core.Graph;
 using WorkflowEngine.Core.Nodes;
 using WorkflowEngine.Core.Registry;
 using WorkflowEngine.Core.State;
-using WorkflowEngine.Tests.UI.Backend.Workflows;
 
 namespace WorkflowEngine.Tests.UI.Backend.Workflows.Onboarding;
 
 /// <summary>
 /// Delegate for onboarding step methods (state, context, errorHandler, config, scopeFactory) -> command.
 /// </summary>
-internal delegate Task<WorkflowCommand<ChatWorkflowState>> StepRunner(
-    ChatWorkflowState state,
+internal delegate Task<WorkflowCommand<OnboardingState>> StepRunner(
+    OnboardingState state,
     WorkflowRunnableContext context,
-    Func<Exception, WorkflowCommand<ChatWorkflowState>> errorHandler,
+    Func<Exception, WorkflowCommand<OnboardingState>> errorHandler,
     WorkflowRunnableConfig config,
     IServiceScopeFactory scopeFactory);
 
@@ -24,19 +23,19 @@ internal delegate Task<WorkflowCommand<ChatWorkflowState>> StepRunner(
 /// </summary>
 public static class OnboardingWorkflow
 {
-    public static WorkflowDeclaration<ChatWorkflowState> Build(IServiceScopeFactory scopeFactory)
+    public static WorkflowDeclaration<OnboardingState> Build(IServiceScopeFactory scopeFactory)
     {
-        WorkflowNode<ChatWorkflowState> Step(string name, StepRunner run) =>
-            WithContextNode.Wrap<ChatWorkflowState>(name, (s, c, e, cfg) => run(s, c, e, cfg, scopeFactory));
+        WorkflowNode<OnboardingState> Step(string name, StepRunner run) =>
+            WithContextNode.Wrap<OnboardingState>(name, (s, c, e, cfg) => run(s, c, e, cfg, scopeFactory));
 
-        var workflow = new WorkflowGraph<ChatWorkflowState>()
+        var workflow = new WorkflowGraph<OnboardingState>()
             .AddNode("welcome", Step("welcome", WelcomeStep.Execute))
             .AddNode("survey", Step("survey", SurveyStep.Execute))
             .AddNode("thankYou", Step("thankYou", ThankYouStep.Execute))
-            .AddNode(WorkflowEdges.AskHuman, AskHumanNode.Create<ChatWorkflowState>())
+            .AddNode(WorkflowEdges.AskHuman, AskHumanNode.Create<OnboardingState>())
             .AddEdge(WorkflowEdges.Start, "welcome");
 
-        return new WorkflowDeclaration<ChatWorkflowState>
+        return new WorkflowDeclaration<OnboardingState>
         {
             Meta = new WorkflowMeta
             {

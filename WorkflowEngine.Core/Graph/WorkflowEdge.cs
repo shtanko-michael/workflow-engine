@@ -18,4 +18,5 @@ public static class WorkflowEdges
     public const string Start = "__start__";
     public const string End = "__end__";
     public const string AskHuman = "__ask_human__";
+    public const string ErrorHandler = "__error_handler__";
 }

@@ -54,4 +54,14 @@ public class ConversationRepository : IConversationRepository
         _context.Conversations.Remove(conversation);
         await _context.SaveChangesAsync();
     }
+
+    public async Task SetActiveLeafId(string id, string leafId)
+    {
+        var conversation = await _context.Conversations.FindAsync(id);
+        if (conversation == null)
+            return;
+
+        conversation.ActiveLeafMessageId = leafId;
+        await _context.SaveChangesAsync();
+    }
 }

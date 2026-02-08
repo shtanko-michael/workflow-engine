@@ -1,5 +1,6 @@
 using WorkflowEngine.Core.Commands;
 using WorkflowEngine.Core.Execution;
+using WorkflowEngine.Core.State;
 
 namespace WorkflowEngine.Core.Graph;
 
@@ -10,4 +11,4 @@ public delegate Task<WorkflowCommand<TState>> WorkflowNode<TState>(
     TState state,
     WorkflowRunnableContext context,
     Func<Exception, WorkflowCommand<TState>> errorHandler,
-    WorkflowRunnableConfig config) where TState : class;
+    WorkflowRunnableConfig config) where TState : WorkflowStateBase;

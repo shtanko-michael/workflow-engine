@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using WorkflowEngine.Core.Execution;
+using WorkflowEngine.Core.Graph;
 using WorkflowEngine.Core.Persistence;
 using WorkflowEngine.Persistence.Postgres.Entities;
 
@@ -79,9 +80,9 @@ public class PostgresCheckpointSaver : ICheckpointSaver
     
     public async Task<CheckpointTuple?> GetAsync(WorkflowRunnableConfig config)
     {
-        var threadId = config.Configurable.TryGetValue("thread_id", out var tid) ? tid?.ToString() : null;
-        var checkpointNs = config.Configurable.TryGetValue("checkpoint_ns", out var ns) ? ns?.ToString() ?? "" : "";
-        var checkpointId = config.Configurable.TryGetValue("checkpoint_id", out var cid) ? cid?.ToString() : null;
+        var threadId = config.Configurable.TryGetValue(WorkflowConfigKeys.ThreadId, out var tid) ? tid?.ToString() : null;
+        var checkpointNs = config.Configurable.TryGetValue(WorkflowConfigKeys.CheckpointNs, out var ns) ? ns?.ToString() ?? "" : "";
+        var checkpointId = config.Configurable.TryGetValue(WorkflowConfigKeys.CheckpointId, out var cid) ? cid?.ToString() : null;
         
         if (string.IsNullOrEmpty(threadId))
             return null;
@@ -127,7 +128,7 @@ public class PostgresCheckpointSaver : ICheckpointSaver
             {
                 Configurable = new Dictionary<string, object>(config.Configurable)
                 {
-                    ["checkpoint_id"] = entity.CheckpointId
+                    [WorkflowConfigKeys.CheckpointId] = entity.CheckpointId
                 },
                 Context = config.Context
             },
@@ -138,7 +139,7 @@ public class PostgresCheckpointSaver : ICheckpointSaver
                 {
                     Configurable = new Dictionary<string, object>(config.Configurable)
                     {
-                        ["checkpoint_id"] = entity.ParentCheckpointId
+                        [WorkflowConfigKeys.CheckpointId] = entity.ParentCheckpointId
                     },
                     Context = config.Context
                 }
@@ -154,7 +155,8 @@ public class PostgresCheckpointSaver : ICheckpointSaver
     {
         var threadId = config.Configurable.TryGetValue("thread_id", out var tid) ? tid?.ToString() : null;
         var checkpointNs = config.Configurable.TryGetValue("checkpoint_ns", out var ns) ? ns?.ToString() ?? "" : "";
-        var parentCheckpointId = config.Configurable.TryGetValue("checkpoint_id", out var cid) ? cid?.ToString() : null;
+        // Prefer explicit parent (set by graph before save)
+        var parentCheckpointId = config.ParentCheckpointId;
         
         if (string.IsNullOrEmpty(threadId))
             throw new ArgumentException("thread_id is required", nameof(config));

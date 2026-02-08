@@ -39,9 +39,11 @@ public interface IMessageRepository
         string? checkpointNs = null);
 
     /// <summary>Edit = insert new message with same parent and new content (new branch).</summary>
-    Task<MessageEntity> CreateSiblingAsync(string editedMessageId, string newContent);
+    Task<MessageEntity> CreateSiblingAsync(MessageEntity editedMessage, string newContent);
 
-    Task UpdateActiveLeafAsync(string conversationId, string leafMessageId);
+    // Task UpdateActiveLeafAsync(string conversationId, string leafMessageId);
 
-    Task UpdateCheckpointNamespaceAsync(string messageId, string checkpointNs);
+    Task UpdateContentAsync(string messageId, string content);
+
+    Task UpdateCheckpointAsync(string messageId, string checkpointId);
 }
