@@ -37,6 +37,12 @@ public class MessageEntity
     [Column("request_id")]
     public string? RequestId { get; set; }
 
+    /// <summary>
+    /// JSON array of quick-reply options for assistant messages (e.g. ["Option A", "Option B"]).
+    /// </summary>
+    [Column("options")]
+    public string? Options { get; set; }
+
     public ConversationEntity Conversation { get; set; } = null!;
     public MessageEntity? Parent { get; set; }
     public ICollection<MessageEntity> Children { get; set; } = new List<MessageEntity>();

@@ -1,0 +1,102 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "🔧 Backend: WorkflowEngine.Tests.UI",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build-backend",
+            "program": "${workspaceFolder}/WorkflowEngine.Tests.UI/backend/bin/Debug/net9.0/WorkflowEngine.Tests.UI.Backend.dll",
+            "args": [],
+            "cwd": "${workspaceFolder}/WorkflowEngine.Tests.UI/backend",
+            "console": "internalConsole",
+            "stopAtEntry": false,
+            "env": {
+                "ASPNETCORE_ENVIRONMENT": "Development",
+                "ASPNETCORE_URLS": "http://localhost:5186"
+            },
+            "launchBrowser": {
+                "enabled": false
+            },
+            "presentation": {
+                "hidden": false,
+                "group": "1_workflow_ui",
+                "order": 2
+            }
+        },
+        {
+            "name": "🎨 Frontend: Vite Dev Server",
+            "type": "node",
+            "request": "launch",
+            "runtimeExecutable": "npm",
+            "runtimeArgs": ["run", "dev"],
+            "cwd": "${workspaceFolder}/WorkflowEngine.Tests.UI/frontend",
+            "console": "integratedTerminal",
+            "internalConsoleOptions": "neverOpen",
+            "serverReadyAction": {
+                "pattern": "(Local|Network):\\s+(https?://[^\\s]+)",
+                "uriFormat": "%s",
+                "action": "openExternally"
+            },
+            "skipFiles": [
+                "<node_internals>/**"
+            ],
+            "presentation": {
+                "hidden": false,
+                "group": "1_workflow_ui",
+                "order": 3
+            }
+        },
+        {
+            "name": "🚀 Full Stack: Backend + Frontend",
+            "type": "compound",
+            "configurations": [
+                "Backend: WorkflowEngine.Tests.UI",
+                "Frontend: Vite Dev Server"
+            ],
+            "preLaunchTask": "build-backend",
+            "presentation": {
+                "hidden": false,
+                "group": "1_workflow_ui",
+                "order": 1
+            },
+            "stopAll": true
+        },
+        {
+            "name": "WorkflowEngine.Tests (launch)",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build",
+            "program": "${workspaceFolder}/WorkflowEngine.Tests/bin/Debug/net9.0/WorkflowEngine.Tests.dll",
+            "args": [],
+            "cwd": "${workspaceFolder}/WorkflowEngine.Tests",
+            "console": "internalConsole",
+            "stopAtEntry": false
+        },
+        {
+            "name": ".NET Core Debugger (attach)",
+            "type": "coreclr",
+            "request": "attach",
+            "processId": "${command:dotrush.pickProcess}"
+        },
+        {
+            "name": ".NET Core Launch (console)",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "build",
+            "program": "${workspaceFolder}/WorkflowEngine.Tests/bin/Debug/net9.0/WorkflowEngine.Tests.dll",
+            "args": [],
+            "cwd": "${workspaceFolder}/WorkflowEngine.Tests",
+            "console": "internalConsole",
+            "stopAtEntry": false
+        },
+        {
+            "name": ".NET Core Attach",
+            "type": "coreclr",
+            "request": "attach"
+        }
+    ]
+}

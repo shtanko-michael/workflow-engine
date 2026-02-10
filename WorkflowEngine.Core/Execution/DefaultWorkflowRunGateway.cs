@@ -31,7 +31,7 @@ public sealed class DefaultWorkflowRunGateway : IWorkflowRunGateway
         return Task.CompletedTask;
     }
 
-    public Task NotifyStreamEndAsync(WorkflowRunnableConfig config, string messageId, string? fullContent = null, CancellationToken cancellationToken = default)
+    public Task NotifyStreamEndAsync(WorkflowRunnableConfig config, string messageId, string? fullContent = null, string[]? options = null, CancellationToken cancellationToken = default)
     {
         return Task.CompletedTask;
     }

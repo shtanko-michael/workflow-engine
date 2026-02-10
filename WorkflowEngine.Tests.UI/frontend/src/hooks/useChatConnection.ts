@@ -134,10 +134,20 @@ export function useChatConnection({
       setStreamingMessageId(null)
     })
 
+    connection.on('assistantOptions', (dialogId: string, messageId: string, options: string[]) => {
+      if (dialogId !== activeDialogId || !options?.length) return
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.messageId === messageId ? { ...m, options } : m,
+        ),
+      )
+    })
+
     return () => {
       connection.off('dialogUpdated')
       connection.off('assistantChunk')
       connection.off('messagesUpdated')
+      connection.off('assistantOptions')
     }
   }, [
     connection,

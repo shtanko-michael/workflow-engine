@@ -164,9 +164,9 @@ function App() {
     }
   }
 
-  const handleSendMessage = async () => {
-    if (!activeDialog || !input.trim() || !activeDialog.lastCheckpointId) return
-    const content = input.trim()
+  const handleSendMessage = async (overrideContent?: string) => {
+    const content = (overrideContent ?? input).trim()
+    if (!activeDialog || !content || !activeDialog.lastCheckpointId) return
     setInput('')
     setLoading(true)
     setPendingResponse(true)
@@ -240,6 +240,7 @@ function App() {
                 setEditContent('')
               }}
               onSwitchVersion={handleSwitchVersion}
+              onOptionSelect={(option) => handleSendMessage(option)}
               loading={loading}
             />
             <footer className="border-t border-neutral-800 bg-neutral-950/80 backdrop-blur">

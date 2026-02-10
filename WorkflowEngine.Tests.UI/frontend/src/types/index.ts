@@ -26,4 +26,6 @@ export type MessageWithVersions = {
   totalVersions: number
   versions: MessageVersion[]
   createdAt: string
+  /** Quick-reply options for assistant messages (e.g. suggested answers to choose from). */
+  options?: string[]
 }

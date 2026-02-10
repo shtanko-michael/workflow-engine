@@ -1,3 +1,4 @@
+using System.Text.Json;
 using WorkflowEngine.Tests.UI.Backend.Data.Entities;
 using WorkflowEngine.Tests.UI.Backend.Data.Repositories;
 using WorkflowEngine.Tests.UI.Backend.Models;
@@ -7,6 +8,20 @@ namespace WorkflowEngine.Tests.UI.Backend.Data.Mappers;
 
 public static class DtoMapper
 {
+    private static IReadOnlyList<string>? ParseOptions(string? optionsJson)
+    {
+        if (string.IsNullOrWhiteSpace(optionsJson)) return null;
+        try
+        {
+            var list = JsonSerializer.Deserialize<List<string>>(optionsJson);
+            return list?.Count > 0 ? list : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     public static DialogDto ToDto(ConversationEntity conversation)
     {
         return new DialogDto(
@@ -36,7 +51,8 @@ public static class DtoMapper
                 m.Content,
                 m.CheckpointId ?? "",
                 m.CreatedAt)).ToList(),
-            active.CreatedAt);
+            active.CreatedAt,
+            ParseOptions(active.Options));
     }
 
     /// <summary>Map a single message (e.g. newly created user message) to MessageWithVersionsDto.</summary>
@@ -51,6 +67,7 @@ public static class DtoMapper
             0,
             1,
             new List<MessageVersionDto> { new MessageVersionDto(m.Id, m.Id, m.Content, m.CheckpointId ?? "", createdAt) },
-            createdAt);
+            createdAt,
+            ParseOptions(m.Options));
     }
 }

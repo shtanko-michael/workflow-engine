@@ -30,6 +30,20 @@ public interface ILLMProviderClient
         Func<string, Task>? onChunk,
         string? model = null,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Execute chat completion with streaming and structured JSON output. Streams text deltas via onTextChunk,
+    /// invokes onAccumulatedRaw with the full accumulated JSON on each chunk (for partial field extraction),
+    /// and invokes onPartialOutput whenever the accumulated JSON can be deserialized to TOutput (partial or final).
+    /// </summary>
+    Task<LLMResponse<TOutput>> ExecuteStreamWithStructuredOutputAsync<TOutput>(
+        LLMRequest request,
+        Func<string, Task>? onTextChunk,
+        Func<TOutput?, Task>? onPartialOutput,
+        Func<string, Task>? onAccumulatedRaw = null,
+        string? model = null,
+        CancellationToken cancellationToken = default)
+        where TOutput : class;
 }
 
 /// <summary>

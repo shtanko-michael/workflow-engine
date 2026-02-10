@@ -21,4 +21,10 @@ public sealed class OnboardingStructuredOutput
 
     [JsonPropertyName("questionToUser")]
     public string? QuestionToUser { get; set; }
+
+    /// <summary>
+    /// Optional short answer options for the user to choose from (e.g. 3–5 variants).
+    /// </summary>
+    [JsonPropertyName("optionsToUser")]
+    public string[]? OptionsToUser { get; set; }
 }

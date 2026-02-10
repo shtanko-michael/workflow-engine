@@ -56,7 +56,7 @@ public class GatewayTests
             return Task.CompletedTask;
         }
 
-        public Task NotifyStreamEndAsync(WorkflowRunnableConfig config, string messageId, string? fullContent = null, CancellationToken cancellationToken = default)
+        public Task NotifyStreamEndAsync(WorkflowRunnableConfig config, string messageId, string? fullContent = null, string[]? options = null, CancellationToken cancellationToken = default)
         {
             NotifyStreamEndCalls.Add((messageId, fullContent));
             return Task.CompletedTask;

@@ -9,6 +9,8 @@ type MessageRowProps = {
   onSaveEdit: () => void
   onCancelEdit: () => void
   onSwitchVersion: (versionId: string) => void
+  /** When user clicks a quick-reply option, send it as the next message. */
+  onOptionSelect?: (option: string) => void
   loading?: boolean
   /** True when this row is the streaming placeholder (no messages yet, streaming first response). */
   isStreamingPlaceholder?: boolean
@@ -38,6 +40,7 @@ export function MessageRow({
   onSaveEdit,
   onCancelEdit,
   onSwitchVersion,
+  onOptionSelect,
   loading = false,
   isStreamingPlaceholder = false,
 }: MessageRowProps) {
@@ -110,9 +113,26 @@ export function MessageRow({
                   <span className="ml-2 text-neutral-500">Thinking...</span>
                 </div>
               ) : (
-                <div className="whitespace-pre-wrap text-sm leading-relaxed text-neutral-100">
-                  {message.content}
-                </div>
+                <>
+                  <div className="whitespace-pre-wrap text-sm leading-relaxed text-neutral-100">
+                    {message.content}
+                  </div>
+                  {!isUser && message.options && message.options.length > 0 && (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {message.options.map((opt) => (
+                        <button
+                          key={opt}
+                          type="button"
+                          onClick={() => onOptionSelect?.(opt)}
+                          disabled={loading}
+                          className="rounded-lg border border-neutral-600 bg-neutral-800/80 px-3 py-1.5 text-sm text-neutral-200 transition hover:border-neutral-500 hover:bg-neutral-700/80 disabled:opacity-50"
+                        >
+                          {opt}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </>
               )}
               {hasVersions && (
                 <VersionSwitcher

@@ -4,7 +4,6 @@
 *.user
 *.userosscache
 *.sln.docstates
-.vscode
 
 # Rider
 .idea/

@@ -56,8 +56,13 @@ public sealed class ChatWorkflowBridge : IWorkflowRunGateway
         return _hub.Clients.Group(_conversationId).SendAsync("assistantChunk", _conversationId, messageId, chunk, cancellationToken);
     }
 
-    public async Task NotifyStreamEndAsync(WorkflowRunnableConfig config, string messageId, string? fullContent = null, CancellationToken cancellationToken = default)
+    public async Task NotifyStreamEndAsync(WorkflowRunnableConfig config, string messageId, string? fullContent = null, string[]? options = null, CancellationToken cancellationToken = default)
     {
         await _messageRepo.UpdateContentAsync(messageId, fullContent ?? string.Empty);
+        if (options != null && options.Length > 0)
+        {
+            await _messageRepo.UpdateOptionsAsync(messageId, options);
+            await _hub.Clients.Group(_conversationId).SendAsync("assistantOptions", _conversationId, messageId, options, cancellationToken);
+        }
     }
 }

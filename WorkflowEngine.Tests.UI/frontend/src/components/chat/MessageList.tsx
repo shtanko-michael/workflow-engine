@@ -16,6 +16,8 @@ type MessageListProps = {
   onSaveEdit: (versionId: string, content: string) => void
   onCancelEdit: () => void
   onSwitchVersion: (versionId: string) => void
+  /** When user selects a quick-reply option, send it as the next message. */
+  onOptionSelect?: (option: string) => void
   loading?: boolean
 }
 
@@ -31,6 +33,7 @@ export function MessageList({
   onSaveEdit,
   onCancelEdit,
   onSwitchVersion,
+  onOptionSelect,
   loading = false,
 }: MessageListProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null)
@@ -65,6 +68,7 @@ export function MessageList({
           onSaveEdit={() => onSaveEdit(message.activeVersionId, editContent)}
           onCancelEdit={onCancelEdit}
           onSwitchVersion={onSwitchVersion}
+          onOptionSelect={onOptionSelect}
           loading={loading}
           isStreamingPlaceholder={message.messageId === streamingMessageId}
         />

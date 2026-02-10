@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using WorkflowEngine.Tests.UI.Backend.Data.Entities;
 
@@ -144,6 +145,19 @@ public class MessageRepository : IMessageRepository
             throw new InvalidOperationException($"Message {messageId} not found");
 
         msg.Content = content;
+        _context.Messages.Update(msg);
+        await _context.SaveChangesAsync();
+    }
+
+    public async Task UpdateOptionsAsync(string messageId, string[]? options)
+    {
+        var msg = await _context.Messages.FirstOrDefaultAsync(m => m.Id == messageId);
+        if (msg == null)
+            throw new InvalidOperationException($"Message {messageId} not found");
+
+        msg.Options = options == null || options.Length == 0
+            ? null
+            : JsonSerializer.Serialize(options);
         _context.Messages.Update(msg);
         await _context.SaveChangesAsync();
     }

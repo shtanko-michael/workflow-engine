@@ -45,5 +45,8 @@ public interface IMessageRepository
 
     Task UpdateContentAsync(string messageId, string content);
 
+    /// <summary>Updates options (quick-reply choices) for an assistant message. Stored as JSON array.</summary>
+    Task UpdateOptionsAsync(string messageId, string[]? options);
+
     Task UpdateCheckpointAsync(string messageId, string checkpointId);
 }

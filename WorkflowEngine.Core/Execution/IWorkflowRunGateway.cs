@@ -23,6 +23,7 @@ public interface IWorkflowRunGateway
 
     /// <summary>
     /// Notifies that streaming for this message is finished. Optional finalization (e.g. update content in DB).
+    /// When options are provided, they are persisted and can be sent to clients for rendering quick-reply choices.
     /// </summary>
-    Task NotifyStreamEndAsync(WorkflowRunnableConfig config, string messageId, string? fullContent, CancellationToken cancellationToken = default);
+    Task NotifyStreamEndAsync(WorkflowRunnableConfig config, string messageId, string? fullContent, string[]? options = null, CancellationToken cancellationToken = default);
 }

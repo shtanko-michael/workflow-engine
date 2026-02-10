@@ -51,6 +51,11 @@ public class HumanMessage : WorkflowMessage
 public class AIMessage : WorkflowMessage
 {
     public string? Content { get; set; }
+
+    /// <summary>
+    /// Optional quick-reply options for the user (e.g. suggested answers to choose from).
+    /// </summary>
+    public string[]? Options { get; set; }
 }
 
 /// <summary>

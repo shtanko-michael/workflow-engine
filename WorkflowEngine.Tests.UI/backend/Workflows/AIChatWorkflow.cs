@@ -5,6 +5,7 @@ using WorkflowEngine.Core.Nodes;
 using WorkflowEngine.Core.Registry;
 using WorkflowEngine.Core.State;
 using WorkflowEngine.Tests.UI.Backend.LLM;
+using WorkflowEngine.Tests.UI.Backend.Workflows.Onboarding;
 
 namespace WorkflowEngine.Tests.UI.Backend.Workflows;
 
@@ -44,29 +45,50 @@ public static class AIChatWorkflow
                         update: state);
                 }
 
-                var request = new LLMRequest
+                var messages = new List<LLMMessage>
                 {
-                    Messages = state.Messages
-                        .Select(m => m switch
-                        {
-                            HumanMessage h => new LLMMessage { Role = "user", Content = h.Content ?? "" },
-                            AIMessage a => new LLMMessage { Role = "assistant", Content = a.Content ?? "" },
-                            SystemMessage s => new LLMMessage { Role = "system", Content = s.Content ?? "" },
-                            _ => null
-                        })
-                        .Where(x => x != null)
-                        .Cast<LLMMessage>()
-                        .ToList()
+                    new() { Role = "system", Content = AIChatConstants.ChatResponseSystemPrompt }
                 };
+                foreach (var m in state.Messages)
+                {
+                    switch (m)
+                    {
+                        case HumanMessage h:
+                            messages.Add(new LLMMessage { Role = "user", Content = h.Content ?? "" });
+                            break;
+                        case AIMessage a:
+                            messages.Add(new LLMMessage { Role = "assistant", Content = a.Content ?? "" });
+                            break;
+                        case SystemMessage s:
+                            messages.Add(new LLMMessage { Role = "system", Content = s.Content ?? "" });
+                            break;
+                    }
+                }
 
-                Func<string, Task> streamCallback = (chunk) => ctx.Gateway.StreamChunkAsync(cfg, message.Id, chunk);
+                var lastStreamedReplyLength = new[] { 0 };
+                Func<string, Task> onAccumulatedRaw = async (accumulated) =>
+                {
+                    var reply = PartialJsonHelper.ExtractStringValue(accumulated, "reply");
+                    if (reply.Length <= lastStreamedReplyLength[0]) return;
+                    var delta = reply.Substring(lastStreamedReplyLength[0]);
+                    lastStreamedReplyLength[0] = reply.Length;
+                    await ctx.Gateway.StreamChunkAsync(cfg, message.Id, delta).ConfigureAwait(false);
+                };
 
                 using (var scope = scopeFactory.CreateScope())
                 {
                     var llm = scope.ServiceProvider.GetRequiredService<ILLMProviderClient>();
-                    var response = await llm.ExecuteStreamAsync(request, streamCallback, model: null, CancellationToken.None).ConfigureAwait(false);
-                    message.Content = response.Content ?? "";
-                    await ctx.Gateway.NotifyStreamEndAsync(cfg, message.Id, message.Content);
+                    var request = new LLMRequest { Messages = messages };
+                    var response = await llm.ExecuteStreamWithStructuredOutputAsync<AIChatStructuredOutput>(
+                        request, onTextChunk: null, onPartialOutput: null, onAccumulatedRaw, model: null, CancellationToken.None).ConfigureAwait(false);
+
+                    var output = response.Output;
+                    message.Content = output?.Reply?.Trim() ?? response.Content ?? "";
+                    var suggestions = output?.SuggestedReplies;
+                    var valid = suggestions?.Where(s => !string.IsNullOrWhiteSpace(s)).Take(6).ToArray();
+                    message.Options = (valid != null && valid.Length >= 1) ? valid : null;
+
+                    await ctx.Gateway.NotifyStreamEndAsync(cfg, message.Id, message.Content, message.Options);
                 }
 
                 return WorkflowCommand<AIChatState>.Create(

@@ -143,6 +143,91 @@ public sealed class OpenAILLMProvider : ILLMProviderClient
     }
 
     /// <summary>
+    /// Streams response while requesting JSON matching TOutput. Accumulates chunks, tries partial deserialization
+    /// on each chunk, and invokes onTextChunk (raw delta), onAccumulatedRaw (full accumulated JSON), and onPartialOutput when deserialization succeeds.
+    /// </summary>
+    public async Task<LLMResponse<TOutput>> ExecuteStreamWithStructuredOutputAsync<TOutput>(
+        LLMRequest request,
+        Func<string, Task>? onTextChunk,
+        Func<TOutput?, Task>? onPartialOutput,
+        Func<string, Task>? onAccumulatedRaw = null,
+        string? model = null,
+        CancellationToken cancellationToken = default)
+        where TOutput : class
+    {
+        var m = model ?? _defaultModel;
+        var responseClient = CreateResponseClient(m);
+
+        var schema = JsonSchemaHelper.GetJsonSchemaForType<TOutput>();
+        var schemaJson = System.Text.Encoding.UTF8.GetString(schema);
+        var baseInstructions = BuildInstructions(request);
+        var structuredInstructions = string.IsNullOrWhiteSpace(baseInstructions)
+            ? $"Return the response in the following JSON schema: {schemaJson}"
+            : $"{baseInstructions}\n\nReturn the response in the following JSON schema: {schemaJson}";
+
+        var options = new ResponseCreationOptions
+        {
+            Instructions = structuredInstructions,
+        };
+
+        var items = BuildResponseItems(request);
+        var fullContent = new System.Text.StringBuilder();
+        TOutput? lastOutput = null;
+
+        await foreach (StreamingResponseUpdate update in responseClient.CreateResponseStreamingAsync(items, options, cancellationToken).ConfigureAwait(false))
+        {
+            if (update is StreamingResponseOutputTextDeltaUpdate textDelta && !string.IsNullOrEmpty(textDelta.Delta))
+            {
+                fullContent.Append(textDelta.Delta);
+                if (onTextChunk != null)
+                    await onTextChunk(textDelta.Delta).ConfigureAwait(false);
+
+                var accumulated = fullContent.ToString();
+                if (!string.IsNullOrWhiteSpace(accumulated))
+                {
+                    if (onAccumulatedRaw != null)
+                        await onAccumulatedRaw(accumulated).ConfigureAwait(false);
+
+                    try
+                    {
+                        var parsed = JsonSerializer.Deserialize<TOutput>(accumulated);
+                        if (parsed != null)
+                        {
+                            lastOutput = parsed;
+                            if (onPartialOutput != null)
+                                await onPartialOutput(parsed).ConfigureAwait(false);
+                        }
+                    }
+                    catch
+                    {
+                        // Incomplete JSON, ignore until we have more data
+                    }
+                }
+            }
+        }
+
+        var content = fullContent.ToString();
+        if (lastOutput == null && !string.IsNullOrWhiteSpace(content))
+        {
+            try
+            {
+                lastOutput = JsonSerializer.Deserialize<TOutput>(content);
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Failed to deserialize structured stream to {Type}", typeof(TOutput).Name);
+            }
+        }
+
+        return new LLMResponse<TOutput>
+        {
+            Content = content,
+            Model = m,
+            Output = lastOutput
+        };
+    }
+
+    /// <summary>
     /// Builds instructions for Response API from system messages (by analogy with BuildInstructions(LLMRequest) in OpenAIProviderClient).
     /// </summary>
     private static string BuildInstructions(LLMRequest request)

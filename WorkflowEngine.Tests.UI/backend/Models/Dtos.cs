@@ -33,7 +33,8 @@ public record MessageWithVersionsDto(
     int CurrentVersionIndex,
     int TotalVersions,
     List<MessageVersionDto> Versions,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    IReadOnlyList<string>? Options = null);
 
 public record CreateDialogRequest(string? Title, string? WorkflowId);
 
