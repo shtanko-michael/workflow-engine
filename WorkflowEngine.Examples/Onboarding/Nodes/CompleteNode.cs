@@ -23,7 +23,6 @@ public static class CompleteNode
             
             state.Messages.Add(completeMessage);
             state.ProgressPercent = 100;
-            state.WorkflowCompleted = true;
             
             return Task.FromResult(WorkflowCommand<OnboardingState>.Create(
                 gotoNode: "summary",

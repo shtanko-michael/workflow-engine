@@ -22,9 +22,9 @@ public static class SummaryNode
             };
             
             state.Messages.Add(summaryMessage);
-            
+
             return Task.FromResult(WorkflowCommand<OnboardingState>.Create(
-                gotoNode: WorkflowEngine.Core.Graph.WorkflowEdges.End,
+                gotoNode: WorkflowEdges.End,
                 update: state
             ));
         });

@@ -15,10 +15,10 @@ public static class OnboardingWorkflow
         var graph = new WorkflowGraph<OnboardingState>()
             .AddNode(WorkflowEdges.AskHuman, AskHumanNode.Create<OnboardingState>())
             .AddNode(WorkflowEdges.ErrorHandler, ErrorHandlerNode.Create<OnboardingState>())
-            .AddNode("welcome", WelcomeNode.Create(), ends: new List<string> { WorkflowEdges.ErrorHandler, "survey" })
-            .AddNode("survey", SurveyNode.Create(), ends: new List<string> { WorkflowEdges.AskHuman, WorkflowEdges.ErrorHandler, "complete" })
-            .AddNode("complete", CompleteNode.Create(), ends: new List<string> { WorkflowEdges.ErrorHandler, "summary" })
-            .AddNode("summary", SummaryNode.Create(), ends: new List<string> { WorkflowEdges.ErrorHandler })
+            .AddNode("welcome", WelcomeNode.Create(), ends: [WorkflowEdges.ErrorHandler, "survey"])
+            .AddNode("survey", SurveyNode.Create(), ends: [WorkflowEdges.AskHuman, WorkflowEdges.ErrorHandler, "complete"])
+            .AddNode("complete", CompleteNode.Create(), ends: [WorkflowEdges.ErrorHandler, "summary"])
+            .AddNode("summary", SummaryNode.Create(), ends: [WorkflowEdges.ErrorHandler])
             .AddEdge(WorkflowEdges.Start, "welcome");
         
         return new WorkflowDeclaration<OnboardingState>
