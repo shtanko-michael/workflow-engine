@@ -25,10 +25,11 @@ public class WorkflowRunnableContext
 public class ClientTrackingContext
 {
     public string? Comment { get; set; }
-    public string UserId { get; set; } = string.Empty;
+    public string? UserId { get; set; }
+    public string? AccountId { get; set; }
     public string? ThreadId { get; set; }
     public int? UserNumber { get; set; }
-    public string WorkspaceId { get; set; } = string.Empty;
+    public string? WorkspaceId { get; set; }
     public string? WorkspaceItemId { get; set; }
     public string? ChatMessageId { get; set; }
     public string? ArtifactId { get; set; }

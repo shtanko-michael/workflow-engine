@@ -81,6 +81,7 @@ public class WorkflowController
                 Tracking = new ClientTrackingContext
                 {
                     UserId = config.UserId ?? string.Empty,
+                    AccountId = config.AccountId ?? string.Empty,
                     ThreadId = config.ThreadId,
                     WorkspaceId = config.WorkspaceId ?? string.Empty,
                     WorkflowType = config.WorkflowType
@@ -119,6 +120,7 @@ public class WorkflowControllerExecuteConfig
     public string WorkflowType { get; set; } = string.Empty;
     public string ThreadId { get; set; } = string.Empty;
     public string? UserId { get; set; }
+    public string? AccountId { get; set; }
     public string? WorkspaceId { get; set; }
     public object? InitialState { get; set; }
     public HumanMessage? ResumeMessage { get; set; }
