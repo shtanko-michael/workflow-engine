@@ -39,6 +39,7 @@ public static class WithContextNode
                     {
                         Comment = context.Tracking.Comment,
                         UserId = context.Tracking.UserId,
+                        AccountId = context.Tracking.AccountId,
                         ThreadId = context.Tracking.ThreadId,
                         UserNumber = context.Tracking.UserNumber,
                         WorkspaceId = context.Tracking.WorkspaceId,
