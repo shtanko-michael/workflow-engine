@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using System.Text.Json;
 using WorkflowEngine.Core.Commands;
+using WorkflowEngine.Core.Exceptions;
 using WorkflowEngine.Core.Graph;
 using WorkflowEngine.Core.State;
 
@@ -16,27 +17,15 @@ public static class ErrorHandlerNode
     /// </summary>
     public static WorkflowNode<TState> Create<TState>() where TState : WorkflowStateBase
     {
-        return WithContextNode.Wrap<TState>(WorkflowEdges.ErrorHandler, (state, ctx, errorHandler, config) =>
+        return WithContextNode.Wrap<TState>(WorkflowEdges.ErrorHandler, async (state, ctx, errorHandler, config) =>
         {
-            // Log error
-            ctx.Logger.LogError("Error in workflow: {ErrorName}, Message: {ErrorMessage}", 
+            ctx.Logger.LogError("Error in workflow: {ErrorName}, Message: {ErrorMessage}",
                 state.ErrorName, state.ErrorMessage);
-            
-            // Clear error and return to askHuman
-            // Copy state and clear error fields
-            var stateJson = JsonSerializer.Serialize(state);
-            var updatedState = JsonSerializer.Deserialize<TState>(stateJson);
-            if (updatedState is WorkflowStateBase baseState)
-            {
-                baseState.ErrorMessage = null;
-                baseState.ErrorName = null;
-                // Keep interruptCaller to know where to return
-            }
-            
-            return Task.FromResult(WorkflowCommand<TState>.Create(
-                gotoNode: WorkflowEdges.AskHuman,
-                update: updatedState
-            ));
+
+            await ctx.Gateway.CreateErrorMessageAsync(config, state.ErrorName, state.ErrorMessage, cancellationToken: default);
+
+			var lastMessage = state.Messages.LastOrDefault();
+			throw new WorkflowInterruptErrorException(lastMessage?.Id ?? "", state.InterruptCaller ?? WorkflowEdges.End);
         });
     }
 }

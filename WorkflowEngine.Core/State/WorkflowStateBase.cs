@@ -19,7 +19,7 @@ public class WorkflowStateBase
     public string? InterruptRequestId { get; set; }
     public string? LastCheckpointId { get; set; }
     public bool WorkflowCompleted { get; set; }
-    public object? ErrorMessage { get; set; }
+    public string? ErrorMessage { get; set; }
     public string? ErrorName { get; set; }
 }
 

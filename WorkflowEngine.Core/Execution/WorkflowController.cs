@@ -102,6 +102,9 @@ public class WorkflowController
 
     private WorkflowCommand<TState> BuildInitialCommand<TState>(WorkflowControllerExecuteConfig config) where TState : WorkflowStateBase
     {
+        if (config.IsRetry)
+            return WorkflowCommand<TState>.Create(resume: true);
+
         var update = config.InitialState as TState;
         var resume = config.ResumeMessage;
 
@@ -138,4 +141,9 @@ public class WorkflowControllerExecuteConfig
     /// Legacy: callback invoked per chunk when no Gateway is set. Ignored when Gateway is provided.
     /// </summary>
     public Func<string, Task>? StreamChunkCallback { get; set; }
+
+    /// <summary>
+    /// When true, build a resume command with no HumanMessage so AskHuman returns to InterruptCaller without adding a message (retry flow).
+    /// </summary>
+    public bool IsRetry { get; set; }
 }

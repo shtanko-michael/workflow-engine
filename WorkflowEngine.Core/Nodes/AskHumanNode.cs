@@ -23,7 +23,6 @@ public static class AskHumanNode
                 && workflowCommand.IsResume
             )
             {
-                // Consume the resume payload so it is not reused in subsequent AskHuman nodes.
                 var resumeMessage = workflowCommand.Resume as HumanMessage;
                 workflowCommand.Resume = null;
                 var returnNode = state.InterruptCaller ?? WorkflowEdges.End;

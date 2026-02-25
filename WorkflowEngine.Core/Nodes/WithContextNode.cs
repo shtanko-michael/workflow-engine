@@ -22,10 +22,9 @@ public static class WithContextNode
     {
         if (string.IsNullOrWhiteSpace(name))
             throw new ArgumentException("Node name cannot be null or empty", nameof(name));
-        if (nodeFunc == null)
-            throw new ArgumentNullException(nameof(nodeFunc));
-        
-        return async (state, context, errorHandler, config) =>
+		ArgumentNullException.ThrowIfNull(nodeFunc);
+
+		return async (state, context, errorHandler, config) =>
         {
             try
             {
@@ -56,12 +55,12 @@ public static class WithContextNode
                 
                 return await nodeFunc(state, enhancedContext, errorHandler, config);
             }
-            catch (WorkflowInterruptException)
-            {
-                // Re-throw interrupt exceptions
-                throw;
-            }
-            catch (SubgraphWorkflowInterruptException)
+			catch (SubgraphWorkflowInterruptException)
+			{
+				// Re-throw interrupt exceptions
+				throw;
+			}
+			catch (WorkflowInterruptException)
             {
                 // Re-throw interrupt exceptions
                 throw;

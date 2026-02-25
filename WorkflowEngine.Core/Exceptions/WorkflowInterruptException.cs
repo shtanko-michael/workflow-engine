@@ -7,29 +7,32 @@ namespace WorkflowEngine.Core.Exceptions;
 /// </summary>
 public class WorkflowInterruptException : Exception
 {
-    public string RequestId { get; }
-    public string Caller { get; }
+	public string RequestId { get; }
+	public string Caller { get; }
 
-    public WorkflowInterruptException(string requestId, string caller)
-        : base("Workflow interrupted for human input")
-    {
-        RequestId = requestId ?? throw new ArgumentNullException(nameof(requestId));
-        Caller = caller ?? throw new ArgumentNullException(nameof(caller));
-    }
+	public WorkflowInterruptException(string requestId, string caller)
+		: base("Workflow interrupted for human input")
+	{
+		RequestId = requestId ?? throw new ArgumentNullException(nameof(requestId));
+		Caller = caller ?? throw new ArgumentNullException(nameof(caller));
+	}
 }
 
 /// <summary>
 /// Exception thrown when subgraph workflow is interrupted (e.g., for human input)
 /// </summary>
-public class SubgraphWorkflowInterruptException : Exception
+public class SubgraphWorkflowInterruptException : WorkflowInterruptException
 {
-    public string RequestId { get; }
-    public string Caller { get; }
+	public SubgraphWorkflowInterruptException(string requestId, string caller)
+	  : base(requestId, caller)
+	{
+	}
+}
 
-    public SubgraphWorkflowInterruptException(string requestId, string caller)
-        : base("Subgraph workflow interrupted for human input")
-    {
-        RequestId = requestId ?? throw new ArgumentNullException(nameof(requestId));
-        Caller = caller ?? throw new ArgumentNullException(nameof(caller));
-    }
+public class WorkflowInterruptErrorException : WorkflowInterruptException
+{
+	public WorkflowInterruptErrorException(string requestId, string caller)
+		: base(requestId, caller)
+	{
+	}
 }

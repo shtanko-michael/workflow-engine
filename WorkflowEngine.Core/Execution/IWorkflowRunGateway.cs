@@ -26,4 +26,10 @@ public interface IWorkflowRunGateway
     /// When options are provided, they are persisted and can be sent to clients for rendering quick-reply choices.
     /// </summary>
     Task NotifyStreamEndAsync(WorkflowRunnableConfig config, string messageId, string? fullContent, string[]? options = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Creates an error message in the external system (when bridge is used) and updates dialog state to error.
+    /// Otherwise returns an in-memory AIMessage with a new Id.
+    /// </summary>
+    Task<AIMessage> CreateErrorMessageAsync(WorkflowRunnableConfig config, string errorType, string? errorDetails, CancellationToken cancellationToken = default);
 }

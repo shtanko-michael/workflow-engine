@@ -35,4 +35,14 @@ public sealed class DefaultWorkflowRunGateway : IWorkflowRunGateway
     {
         return Task.CompletedTask;
     }
+
+    public Task<AIMessage> CreateErrorMessageAsync(WorkflowRunnableConfig config, string errorType, string? errorDetails, CancellationToken cancellationToken = default)
+    {
+        var message = new AIMessage
+        {
+            Id = Guid.NewGuid().ToString(),
+            Content = ""
+        };
+        return Task.FromResult(message);
+    }
 }
