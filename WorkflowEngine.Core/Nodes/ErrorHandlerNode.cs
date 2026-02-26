@@ -1,5 +1,4 @@
 using Microsoft.Extensions.Logging;
-using System.Text.Json;
 using WorkflowEngine.Core.Commands;
 using WorkflowEngine.Core.Exceptions;
 using WorkflowEngine.Core.Graph;
@@ -22,10 +21,8 @@ public static class ErrorHandlerNode
             ctx.Logger.LogError("Error in workflow: {ErrorName}, Message: {ErrorMessage}",
                 state.ErrorName, state.ErrorMessage);
 
-            await ctx.Gateway.CreateErrorMessageAsync(config, state.ErrorName, state.ErrorMessage, cancellationToken: default);
-
-			var lastMessage = state.Messages.LastOrDefault();
-			throw new WorkflowInterruptErrorException(lastMessage?.Id ?? "", state.InterruptCaller ?? WorkflowEdges.End);
+            var lastMessage = state.Messages.LastOrDefault();
+            throw new WorkflowInterruptErrorException(lastMessage?.Id ?? "", state.InterruptCaller ?? WorkflowEdges.End);
         });
     }
 }

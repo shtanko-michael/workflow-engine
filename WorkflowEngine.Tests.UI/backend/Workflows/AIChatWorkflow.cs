@@ -1,9 +1,11 @@
 using Microsoft.Extensions.DependencyInjection;
 using WorkflowEngine.Core.Commands;
+using WorkflowEngine.Core.Execution;
 using WorkflowEngine.Core.Graph;
 using WorkflowEngine.Core.Nodes;
 using WorkflowEngine.Core.Registry;
 using WorkflowEngine.Core.State;
+using WorkflowEngine.Tests.UI.Backend.Contracts;
 using WorkflowEngine.Tests.UI.Backend.LLM;
 using WorkflowEngine.Tests.UI.Backend.Workflows.Onboarding;
 
@@ -18,10 +20,11 @@ public static class AIChatWorkflow
         var workflow = new WorkflowGraph<AIChatState>()
             .AddNode("start", async (state, ctx, errorHandler, cfg) =>
             {
-                var message = await ctx.Gateway.CreateAssistantMessageAsync(cfg, "", CancellationToken.None);
+                var ms = ctx.Container!.GetRequiredService<IWorkflowMessageService>();
+                var message = await ms.CreateAssistantMessageAsync(cfg, "", CancellationToken.None);
                 message.Content = "Hello! I'm an AI assistant. Ask me anything or type \"bye\" to finish.";
                 state.Messages.Add(message);
-                await ctx.Gateway.NotifyStreamEndAsync(cfg, message.Id, message.Content);
+                await ms.NotifyStreamEndAsync(cfg, message.Id, message.Content);
                 state.InterruptCaller = "handleInput";
                 return WorkflowCommand<AIChatState>.Create(
                     gotoNode: WorkflowEdges.AskHuman,
@@ -33,13 +36,14 @@ public static class AIChatWorkflow
                 var content = lastHuman?.Content?.Trim() ?? string.Empty;
                 state.LastUserMessage = content;
 
-                var message = await ctx.Gateway.CreateAssistantMessageAsync(cfg, "", CancellationToken.None);
+                var ms = ctx.Container!.GetRequiredService<IWorkflowMessageService>();
+                var message = await ms.CreateAssistantMessageAsync(cfg, "", CancellationToken.None);
                 state.Messages.Add(message);
 
                 if (string.Equals(content, "bye", StringComparison.OrdinalIgnoreCase))
                 {
                     message.Content = "Goodbye!";
-                    await ctx.Gateway.NotifyStreamEndAsync(cfg, message.Id, message.Content);
+                    await ms.NotifyStreamEndAsync(cfg, message.Id, message.Content);
                     return WorkflowCommand<AIChatState>.Create(
                         gotoNode: WorkflowEdges.End,
                         update: state);
@@ -72,7 +76,7 @@ public static class AIChatWorkflow
                     if (reply.Length <= lastStreamedReplyLength[0]) return;
                     var delta = reply.Substring(lastStreamedReplyLength[0]);
                     lastStreamedReplyLength[0] = reply.Length;
-                    await ctx.Gateway.StreamChunkAsync(cfg, message.Id, delta).ConfigureAwait(false);
+                    await ms.StreamChunkAsync(cfg, message.Id, delta).ConfigureAwait(false);
                 };
 
                 using (var scope = scopeFactory.CreateScope())
@@ -88,7 +92,7 @@ public static class AIChatWorkflow
                     var valid = suggestions?.Where(s => !string.IsNullOrWhiteSpace(s)).Take(6).ToArray();
                     message.Options = (valid != null && valid.Length >= 1) ? valid : null;
 
-                    await ctx.Gateway.NotifyStreamEndAsync(cfg, message.Id, message.Content, message.Options);
+                    await ms.NotifyStreamEndAsync(cfg, message.Id, message.Content, message.Options);
                 }
 
                 return WorkflowCommand<AIChatState>.Create(

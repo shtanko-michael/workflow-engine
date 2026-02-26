@@ -1,8 +1,10 @@
 using Microsoft.EntityFrameworkCore;
+using WorkflowEngine.Core.Execution;
 using WorkflowEngine.Core.Extensions;
 using WorkflowEngine.Core.Registry;
 using WorkflowEngine.Core.Persistence;
 using WorkflowEngine.Persistence.Postgres;
+using WorkflowEngine.Tests.UI.Backend.Contracts;
 using WorkflowEngine.Tests.UI.Backend.Data;
 using WorkflowEngine.Tests.UI.Backend.Data.Repositories;
 using WorkflowEngine.Tests.UI.Backend.Hubs;
@@ -45,6 +47,8 @@ builder.Services.AddScoped<IConversationRepository, ConversationRepository>();
 builder.Services.AddScoped<IMessageRepository, MessageRepository>();
 // InMemoryChatStore kept for backward compatibility with old API (v1)
 builder.Services.AddSingleton<InMemoryChatStore>();
+builder.Services.AddScoped<IWorkflowRunScope, WorkflowRunScope>();
+builder.Services.AddScoped<IWorkflowMessageService, ChatWorkflowMessageService>();
 builder.Services.AddScoped<ChatWorkflowServiceNew>();
 
 var app = builder.Build();

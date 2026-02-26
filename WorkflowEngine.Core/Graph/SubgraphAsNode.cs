@@ -41,7 +41,11 @@ public static class SubgraphAsNode
             // remove parent's command
             parentConfig.Configurable.Remove(WorkflowConfigKeys.WorkflowCommandKey);
 
+            await SafeNotifySubgraphAsync(parentConfig, state, (i, c, s) => i.OnSubgraphStartedAsync(nodeName, c, s));
+
             var childState = await subgraph.InvokeAsync(commandToChild, childConfig);
+
+            await SafeNotifySubgraphAsync(parentConfig, state, (i, c, s) => i.OnSubgraphCompletedAsync(nodeName, c, s));
 
             if (childState.WorkflowCompleted)
             {
@@ -98,7 +102,12 @@ public static class SubgraphAsNode
             // remove parent's command
             parentConfig.Configurable.Remove(WorkflowConfigKeys.WorkflowCommandKey);
 
+            await SafeNotifySubgraphAsync(parentConfig, parentState, (i, c, s) => i.OnSubgraphStartedAsync(nodeName, c, s));
+
             var childState = await subgraph.InvokeAsync(commandToChild, childConfig);
+
+            await SafeNotifySubgraphAsync(parentConfig, parentState, (i, c, s) => i.OnSubgraphCompletedAsync(nodeName, c, s));
+
             if (childState.WorkflowCompleted)
             {
                 parentConfig.SubgraphCheckpointId = null;
@@ -140,5 +149,21 @@ public static class SubgraphAsNode
             Configurable = configurable,
             Context = parentConfig.Context
         };
+    }
+
+    private static async Task SafeNotifySubgraphAsync<T>(WorkflowRunnableConfig config, T state,
+        Func<IWorkflowRunInterceptor, WorkflowRunnableConfig, T, Task> invoke)
+        where T : WorkflowStateBase
+    {
+        if (config.Context?.Interceptor is not IWorkflowRunInterceptor interceptor)
+            return;
+        try
+        {
+            await invoke(interceptor, config, state);
+        }
+        catch
+        {
+            // Do not let interceptor break the engine; swallow exceptions
+        }
     }
 }

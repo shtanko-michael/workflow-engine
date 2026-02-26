@@ -2,6 +2,7 @@ using WorkflowEngine.Core.Commands;
 using WorkflowEngine.Core.Execution;
 using WorkflowEngine.Core.Graph;
 using WorkflowEngine.Core.State;
+using WorkflowEngine.Tests.UI.Backend.Contracts;
 using WorkflowEngine.Tests.UI.Backend.LLM;
 
 namespace WorkflowEngine.Tests.UI.Backend.Workflows.Onboarding;
@@ -39,7 +40,8 @@ public static class SurveyStep
             }
         }
 
-        var message = await context.Gateway.CreateAssistantMessageAsync(config, "", CancellationToken.None);
+        var ms = context.Container!.GetRequiredService<IWorkflowMessageService>();
+        var message = await ms.CreateAssistantMessageAsync(config, "", CancellationToken.None);
         state.Messages.Add(message);
 
         var lastStreamedQuestionLength = new[] { 0 };
@@ -49,7 +51,7 @@ public static class SurveyStep
             if (question.Length <= lastStreamedQuestionLength[0]) return;
             var delta = question.Substring(lastStreamedQuestionLength[0]);
             lastStreamedQuestionLength[0] = question.Length;
-            await context.Gateway.StreamChunkAsync(config, message.Id, delta).ConfigureAwait(false);
+            await ms.StreamChunkAsync(config, message.Id, delta).ConfigureAwait(false);
         };
 
         using var scope = scopeFactory.CreateScope();
@@ -65,7 +67,7 @@ public static class SurveyStep
         var questionToUser = output.QuestionToUser?.Trim() ?? "";
         message.Content = questionToUser;
         message.Options = output.OptionsToUser?.Length > 0 ? output.OptionsToUser : null;
-        await context.Gateway.NotifyStreamEndAsync(config, message.Id, message.Content, message.Options);
+        await ms.NotifyStreamEndAsync(config, message.Id, message.Content, message.Options);
 
         if (output.Completed && !string.IsNullOrWhiteSpace(output.Job) && !string.IsNullOrWhiteSpace(output.Sphere) && output.Employees.HasValue)
         {

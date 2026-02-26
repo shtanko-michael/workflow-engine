@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.SignalR;
 using WorkflowEngine.Core.Execution;
 using WorkflowEngine.Core.Persistence;
 using WorkflowEngine.Core.State;
+using WorkflowEngine.Tests.UI.Backend.Contracts;
 using WorkflowEngine.Tests.UI.Backend.Data.Entities;
 using WorkflowEngine.Tests.UI.Backend.Data.Mappers;
 using WorkflowEngine.Tests.UI.Backend.Data.Repositories;
@@ -22,6 +23,8 @@ public class ChatWorkflowServiceNew
     private readonly IHubContext<ChatHub> _hub;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ICheckpointSaverFactory _checkpointer;
+    private readonly IWorkflowRunScope _runScope;
+    private readonly IServiceProvider _serviceProvider;
 
     public ChatWorkflowServiceNew(
         WorkflowController workflowController,
@@ -30,7 +33,9 @@ public class ChatWorkflowServiceNew
         IMessageRepository messageRepo,
         IHubContext<ChatHub> hub,
         IServiceScopeFactory scopeFactory,
-        ICheckpointSaverFactory checkpointer)
+        ICheckpointSaverFactory checkpointer,
+        IWorkflowRunScope runScope,
+        IServiceProvider serviceProvider)
     {
         _workflowController = workflowController;
         _logger = logger;
@@ -39,6 +44,8 @@ public class ChatWorkflowServiceNew
         _hub = hub;
         _scopeFactory = scopeFactory;
         _checkpointer = checkpointer;
+        _runScope = runScope;
+        _serviceProvider = serviceProvider;
     }
 
     public async Task<ConversationEntity> CreateDialogAsync(string workflowId, string? title)
@@ -317,14 +324,21 @@ public class ChatWorkflowServiceNew
         string? conversationId = null,
         string? interruptRequestId = null)
     {
-        IWorkflowRunGateway? gateway = null;
+        if (!string.IsNullOrWhiteSpace(conversationId))
+            _runScope.ConversationId = conversationId;
+
+        object? interceptor = null;
         if (!string.IsNullOrWhiteSpace(conversationId))
         {
-            gateway = new ChatWorkflowBridge(
-                conversationId,
-                _messageRepo,
-                _conversationRepo,
-                _hub);
+            var messageService = _serviceProvider.GetRequiredService<IWorkflowMessageService>();
+            interceptor = workflowId switch
+            {
+                DemoChatWorkflow.WorkflowId => new TestsUIWorkflowInterceptor<DemoChatState>(messageService),
+                AIChatWorkflow.WorkflowId => new TestsUIWorkflowInterceptor<AIChatState>(messageService),
+                OnboardingConstants.WorkflowId => new TestsUIWorkflowInterceptor<OnboardingState>(messageService),
+                RoutedChatConstants.WorkflowId => new TestsUIWorkflowInterceptor<RoutedChatState>(messageService),
+                _ => null
+            };
         }
 
         var mainNs = checkpointNs?.Split(":")[0];
@@ -335,7 +349,7 @@ public class ChatWorkflowServiceNew
             ResumeMessage = resumeMessage,
             CheckpointId = checkpointId,
             CheckpointNs = mainNs,
-            Gateway = gateway
+            Interceptor = interceptor
         };
 
         return workflowId switch

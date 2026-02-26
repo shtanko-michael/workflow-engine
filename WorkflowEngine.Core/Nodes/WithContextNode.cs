@@ -28,12 +28,12 @@ public static class WithContextNode
         {
             try
             {
-                // Enhance context with node name (preserve Gateway so nodes can create/stream messages)
+                // Enhance context with node name (preserve Interceptor so host can be notified)
                 var enhancedContext = new WorkflowRunnableContext
                 {
                     Controller = context.Controller,
                     Container = context.Container,
-                    Gateway = context.Gateway,
+                    Interceptor = context.Interceptor,
                     Tracking = new ClientTrackingContext
                     {
                         Comment = context.Tracking.Comment,

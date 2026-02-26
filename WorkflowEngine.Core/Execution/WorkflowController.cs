@@ -68,8 +68,6 @@ public class WorkflowController
 
     private WorkflowRunnableConfig BuildRunnableConfig(WorkflowControllerExecuteConfig config)
     {
-        var gateway = config.Gateway ?? new DefaultWorkflowRunGateway(config.StreamChunkCallback);
-
         var runnableConfig = new WorkflowRunnableConfig
         {
             Configurable = [],
@@ -77,7 +75,7 @@ public class WorkflowController
             {
                 Controller = this,
                 Container = _serviceProvider,
-                Gateway = gateway,
+                Interceptor = config.Interceptor,
                 Tracking = new ClientTrackingContext
                 {
                     UserId = config.UserId ?? string.Empty,
@@ -133,14 +131,9 @@ public class WorkflowControllerExecuteConfig
     public string? CheckpointNs { get; set; }
 
     /// <summary>
-    /// Optional gateway (e.g. bridge to external system). When set, nodes create messages and stream through it; otherwise default in-memory + legacy StreamChunkCallback is used.
+    /// Optional interceptor (e.g. for logging or external system notifications). When set, the engine calls it at graph/subgraph/node events and completion.
     /// </summary>
-    public IWorkflowRunGateway? Gateway { get; set; }
-
-    /// <summary>
-    /// Legacy: callback invoked per chunk when no Gateway is set. Ignored when Gateway is provided.
-    /// </summary>
-    public Func<string, Task>? StreamChunkCallback { get; set; }
+    public IWorkflowRunInterceptor? Interceptor { get; set; }
 
     /// <summary>
     /// When true, build a resume command with no HumanMessage so AskHuman returns to InterruptCaller without adding a message (retry flow).

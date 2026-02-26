@@ -73,6 +73,8 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
 			hypothesisId: "A");
 		#endregion
 
+		await SafeNotifyInterceptorAsync(config, state, (i, c, s) => i.OnGraphStartedAsync(c, s));
+
 		try
 		{
 			config.ParentCheckpointId = config.CheckpointId;
@@ -87,8 +89,12 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
 					throw new InvalidOperationException($"Node '{currentNode}' not found");
 				}
 
+				await SafeNotifyInterceptorAsync(config, state, (i, c, s) => i.OnNodeStartedAsync(currentNode, c, s));
+
 				// Execute node
 				var nodeCommand = await node(state, config.Context, (ex) => errorHandler((ex, config, state)), config);
+
+				await SafeNotifyInterceptorAsync(config, state, (i, c, s) => i.OnNodeCompletedAsync(currentNode, c, s));
 
 				// Apply state update
 				if (nodeCommand.Update != null)
@@ -119,6 +125,7 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
 				currentNode = nextNode;
 			}
 
+			await SafeNotifyInterceptorAsync(config, state, (i, c, s) => i.OnGraphCompletedAsync(c, s, WorkflowGraphCompletionReason.Normal));
 			return state;
 		}
 		catch (WorkflowInterruptErrorException interruptEx)
@@ -128,6 +135,11 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
 			state.InterruptRequestId = interruptEx.RequestId;
 			state.InterruptCaller = interruptEx.Caller;
 			state.InterruptReason = WorkflowInterruptReason.Error;
+
+			await SafeNotifyInterceptorAsync(config, state, (i, c, s) => i.OnErrorAsync(c, s));
+			await SafeNotifyInterceptorAsync(config, state, (i, c, s) => i.OnInterruptAsync(c, s));
+			await SafeNotifyInterceptorAsync(config, state, (i, c, s) => i.OnGraphCompletedAsync(c, s, WorkflowGraphCompletionReason.Error));
+
 			// save checkpoint at the node that interrupted the workflow basically AskHuman node
 			await SaveCheckpointAsync(config, state, WorkflowEdges.AskHuman);
 
@@ -142,6 +154,10 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
 			state.InterruptRequestId = interruptEx.RequestId;
 			state.InterruptCaller = interruptEx.Caller;
 			state.InterruptReason = WorkflowInterruptReason.AskHuman;
+
+			await SafeNotifyInterceptorAsync(config, state, (i, c, s) => i.OnInterruptAsync(c, s));
+			await SafeNotifyInterceptorAsync(config, state, (i, c, s) => i.OnGraphCompletedAsync(c, s, WorkflowGraphCompletionReason.Interrupt));
+
 			// save checkpoint at the subgraph node that interrupted the parent
 			await SaveCheckpointAsync(config, state, state.InterruptCaller);
 
@@ -422,5 +438,25 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
 		var rawHint = BitConverter.ToInt64(bytes);
 		var hint = Math.Abs(rawHint) % 10_000_000_000_000_000;
 		return $"{version:D32}.{hint:D16}";
+	}
+
+	/// <summary>
+	/// Invokes the interceptor without letting it break the engine. Logs and swallows any exception.
+	/// </summary>
+	private async Task SafeNotifyInterceptorAsync(
+		WorkflowRunnableConfig config,
+		TState state,
+		Func<IWorkflowRunInterceptor, WorkflowRunnableConfig, TState, Task> invoke)
+	{
+		if (config.Context?.Interceptor is not IWorkflowRunInterceptor interceptor)
+			return;
+		try
+		{
+			await invoke(interceptor, config, state);
+		}
+		catch (Exception ex)
+		{
+			_logger?.LogWarning(ex, "Workflow interceptor notification failed");
+		}
 	}
 }
