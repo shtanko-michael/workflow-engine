@@ -30,6 +30,7 @@ public class WorkflowStateBase
 [JsonDerivedType(typeof(HumanMessage), "human")]
 [JsonDerivedType(typeof(AIMessage), "ai")]
 [JsonDerivedType(typeof(SystemMessage), "system")]
+[JsonDerivedType(typeof(SummaryMessage), "summary")]
 [JsonDerivedType(typeof(RemoveMessage), "remove")]
 public abstract class WorkflowMessage
 {
@@ -43,7 +44,33 @@ public class HumanMessage : WorkflowMessage
 {
     public string? RequestId { get; set; }
     public string? Content { get; set; }
+    public List<MessageAttachment> Attachments { get; set; } = new();
 }
+
+public enum MessageAttachmentType
+{
+    File = 0,
+    Text = 1,
+}
+
+public class MessageAttachmentFile
+{
+    public string Id { get; set; }
+    public string Name { get; set; }
+    public string Extension { get; set; }
+    public string CloudKey { get; set; }
+    public string MimeType { get; set; }
+    public long Size { get; set; }
+    public string Type { get; set; }
+}
+
+public class MessageAttachment
+{
+    public MessageAttachmentType Type { get; set; }
+    public MessageAttachmentFile? File { get; set; }
+    public string? Content { get; set; }
+}
+
 
 /// <summary>
 /// AI message in workflow
@@ -62,6 +89,14 @@ public class AIMessage : WorkflowMessage
 /// System message in workflow
 /// </summary>
 public class SystemMessage : WorkflowMessage
+{
+    public string? Content { get; set; }
+}
+
+/// <summary>
+/// Summary message in workflow
+/// </summary>
+public class SummaryMessage : WorkflowMessage
 {
     public string? Content { get; set; }
 }
