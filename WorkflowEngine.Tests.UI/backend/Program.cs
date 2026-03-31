@@ -72,6 +72,7 @@ using (var scope = app.Services.CreateScope())
     registry.Register(AIChatWorkflow.Build(scopeFactory));
     registry.Register(OnboardingWorkflow.Build(scopeFactory));
     registry.Register(RoutedChatWorkflow.Build(scopeFactory));
+    registry.Register(SupervisorRoutedChatWorkflow.Build(scopeFactory));
 }
 
 app.UseCors("ui");

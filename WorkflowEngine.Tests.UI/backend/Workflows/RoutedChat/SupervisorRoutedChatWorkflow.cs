@@ -1,0 +1,88 @@
+using WorkflowEngine.Core.Graph;
+using WorkflowEngine.Core.Persistence;
+using WorkflowEngine.Core.Registry;
+using WorkflowEngine.Core.Supervisor;
+using WorkflowEngine.Tests.UI.Backend.Workflows.Onboarding;
+using WorkflowEngine.Tests.UI.Backend.Workflows.RoutedChat.Weather;
+
+namespace WorkflowEngine.Tests.UI.Backend.Workflows.RoutedChat;
+
+/// <summary>
+/// Supervisor workflow where menu node uses LLM to decide task-stack actions.
+/// </summary>
+public static class SupervisorRoutedChatWorkflow
+{
+    public static WorkflowDeclaration<SupervisorRoutedChatState> Build(IServiceScopeFactory scopeFactory)
+    {
+        var weatherGraph = new WorkflowGraph<WeatherSubState>()
+            .AddNode(WorkflowEdges.AskHuman, WorkflowEngine.Core.Nodes.AskHumanNode.Create<WeatherSubState>())
+            .AddNode("askCity", AskCityNode.Create())
+            .AddNode("forecast", ForecastNode.Create(scopeFactory))
+            .AddEdge(WorkflowEdges.Start, "askCity");
+
+        var scope = scopeFactory.CreateScope();
+        var checkpointerFactory = scope.ServiceProvider.GetRequiredService<ICheckpointSaverFactory>();
+        var compiledWeather = weatherGraph.Compile(checkpointerFactory);
+
+        var onboardingDeclaration = OnboardingWorkflow.Build(scopeFactory);
+        var compiledOnboarding = onboardingDeclaration.Workflow.Compile(checkpointerFactory);
+
+        var workflow = new SupervisorGraph<SupervisorRoutedChatState>()
+            .SetMenuNode(
+                SupervisorRoutedChatConstants.MenuTaskType,
+                SupervisorTaskMenuNode.Create(scopeFactory))
+            .SetIntentResolver((state, _, _) =>
+            {
+                var decision = state.MenuDecision ?? SupervisorDecision.Continue("menu-default");
+                state.MenuDecision = null;
+                return Task.FromResult(decision);
+            })
+            .RegisterTask(
+                SupervisorRoutedChatConstants.WeatherTaskType,
+                compiledWeather,
+                initialStateMapping: (parent, _) => new WeatherSubState
+                {
+                    Messages = parent.Messages.Count > 0 ? [parent.Messages.Last()] : [],
+                },
+                completeStateMapping: (parent, sub, _) =>
+                {
+                    if (sub.Messages.Count > 0 && sub.Messages.Last() is { } lastMsg)
+                        parent.Messages = parent.Messages.Append(lastMsg).ToList();
+                    if (!string.IsNullOrEmpty(sub.City))
+                        parent.RequestedForecastCities = (parent.RequestedForecastCities ?? []).Append(sub.City).ToArray();
+                    return parent;
+                },
+                taskName: "Weather forecast",
+                taskDescription: "Get weather forecast for a city")
+            .RegisterTask(
+                SupervisorRoutedChatConstants.OnboardingTaskType,
+                compiledOnboarding,
+                initialStateMapping: (parent, _) => new OnboardingState
+                {
+                    Messages = parent.Messages.Count > 0 ? [parent.Messages.Last()] : [],
+                },
+                completeStateMapping: (parent, sub, _) =>
+                {
+                    if (sub.Messages.Count > 0 && sub.Messages.Last() is { } lastMsg)
+                        parent.Messages = parent.Messages.Append(lastMsg).ToList();
+                    var surveyEntry =
+                        $"Job: {sub.OnboardingJob ?? "—"}, Industry: {sub.OnboardingSphere ?? "—"}, Team size: {sub.OnboardingEmployees?.ToString() ?? "—"}";
+                    parent.SurveyResults = (parent.SurveyResults ?? []).Append(surveyEntry).ToArray();
+                    return parent;
+                },
+                taskName: "Onboarding survey",
+                taskDescription: "Run onboarding questionnaire and collect profile information");
+
+        return new WorkflowDeclaration<SupervisorRoutedChatState>
+        {
+            Meta = new WorkflowMeta
+            {
+                Id = SupervisorRoutedChatConstants.WorkflowId,
+                Name = "Supervisor Routed Chat",
+                Description = "Task-stack supervisor with LLM-driven menu decisions and intent execution node.",
+                Version = "1.0.0"
+            },
+            Workflow = workflow.Build()
+        };
+    }
+}

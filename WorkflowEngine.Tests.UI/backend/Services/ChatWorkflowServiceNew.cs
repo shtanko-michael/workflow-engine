@@ -327,7 +327,7 @@ public class ChatWorkflowServiceNew
         if (!string.IsNullOrWhiteSpace(conversationId))
             _runScope.ConversationId = conversationId;
 
-        object? interceptor = null;
+        IWorkflowRunInterceptor? interceptor = null;
         if (!string.IsNullOrWhiteSpace(conversationId))
         {
             var messageService = _serviceProvider.GetRequiredService<IWorkflowMessageService>();
@@ -337,6 +337,7 @@ public class ChatWorkflowServiceNew
                 AIChatWorkflow.WorkflowId => new TestsUIWorkflowInterceptor<AIChatState>(messageService),
                 OnboardingConstants.WorkflowId => new TestsUIWorkflowInterceptor<OnboardingState>(messageService),
                 RoutedChatConstants.WorkflowId => new TestsUIWorkflowInterceptor<RoutedChatState>(messageService),
+                SupervisorRoutedChatConstants.WorkflowId => new TestsUIWorkflowInterceptor<SupervisorRoutedChatState>(messageService),
                 _ => null
             };
         }
@@ -358,6 +359,7 @@ public class ChatWorkflowServiceNew
             AIChatWorkflow.WorkflowId => await _workflowController.ExecuteAsync<AIChatState>(executeConfig),
             OnboardingConstants.WorkflowId => await _workflowController.ExecuteAsync<OnboardingState>(executeConfig),
             RoutedChatConstants.WorkflowId => await _workflowController.ExecuteAsync<RoutedChatState>(executeConfig),
+            SupervisorRoutedChatConstants.WorkflowId => await _workflowController.ExecuteAsync<SupervisorRoutedChatState>(executeConfig),
             _ => throw new InvalidOperationException($"Unsupported workflow type '{workflowId}'")
         };
     }
