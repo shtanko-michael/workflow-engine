@@ -154,7 +154,16 @@ public static class TaskStackReducer
     public static TaskInstance? GetCurrentTask<TState>(TState state) where TState : ISupervisorState
     {
         ArgumentNullException.ThrowIfNull(state);
-        return state.TaskStack.Count == 0 ? null : state.TaskStack[^1];
+        if (!string.IsNullOrWhiteSpace(state.CurrentTaskId))
+        {
+            var byCurrentId = state.TaskStack.FindLast(x =>
+                string.Equals(x.TaskId, state.CurrentTaskId, StringComparison.Ordinal) &&
+                x.Status == TaskStatus.Active);
+            if (byCurrentId != null)
+                return byCurrentId;
+        }
+
+        return state.TaskStack.FindLast(x => x.Status == TaskStatus.Active);
     }
 
     private static void EnsureNotEmpty<TState>(TState state, TaskStackReducerOptions options) where TState : ISupervisorState

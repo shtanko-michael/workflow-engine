@@ -196,5 +196,6 @@ public class WorkflowConfigKeys
     public const string LastMessageId = "last_message_id";
     public const string SubgraphCheckpointId = "subgraph_checkpoint_id";
     public const string SubgraphCheckpointNs = "subgraph_checkpoint_ns";
+    public const string SkipSupervisorInternalCheckpoints = "skip_supervisor_internal_checkpoints";
 
 }

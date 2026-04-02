@@ -116,8 +116,9 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
 						break;
 				}
 
-				// Save checkpoint (skip if going to AskHuman, as it will be saved in catch block)
-				if (nextNode is not (WorkflowEdges.AskHuman or WorkflowEdges.ErrorHandler))
+				// Save checkpoint (skip if going to AskHuman/Error, those are handled in catch blocks)
+				if (nextNode is not (WorkflowEdges.AskHuman or WorkflowEdges.ErrorHandler)
+				    && !ShouldSkipCheckpoint(config, currentNode))
 				{
 					await SaveCheckpointAsync(config, state, nextNode);
 				}
@@ -438,6 +439,16 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
 		var rawHint = BitConverter.ToInt64(bytes);
 		var hint = Math.Abs(rawHint) % 10_000_000_000_000_000;
 		return $"{version:D32}.{hint:D16}";
+	}
+
+	private static bool ShouldSkipCheckpoint(WorkflowRunnableConfig config, string currentNode)
+	{
+		if (!config.SkipSupervisorInternalCheckpoints)
+			return false;
+
+		return currentNode is SupervisorNodeNames.Intent
+			or SupervisorNodeNames.StackApply
+			or SupervisorNodeNames.TaskDispatch;
 	}
 
 	/// <summary>

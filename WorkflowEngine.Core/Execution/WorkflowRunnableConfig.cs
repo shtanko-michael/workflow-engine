@@ -54,4 +54,23 @@ public class WorkflowRunnableConfig
         get => Configurable.TryGetValue(WorkflowConfigKeys.SubgraphCheckpointNs, out object? value) ? value?.ToString() : null;
         set => Configurable[WorkflowConfigKeys.SubgraphCheckpointNs] = value;
     }
+
+    /// <summary>
+    /// Skip checkpoint save for internal supervisor routing nodes (Intent/StackApply/TaskDispatch).
+    /// </summary>
+    public bool SkipSupervisorInternalCheckpoints
+    {
+        get
+        {
+            if (!Configurable.TryGetValue(WorkflowConfigKeys.SkipSupervisorInternalCheckpoints, out var value) || value == null)
+                return false;
+            return value switch
+            {
+                bool typed => typed,
+                string text when bool.TryParse(text, out var parsed) => parsed,
+                _ => false
+            };
+        }
+        set => Configurable[WorkflowConfigKeys.SkipSupervisorInternalCheckpoints] = value;
+    }
 }

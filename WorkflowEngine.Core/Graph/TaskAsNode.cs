@@ -51,10 +51,13 @@ public static class TaskAsNode
 
             if (childState.InterruptReason == WorkflowInterruptReason.AskHuman && !string.IsNullOrEmpty(childState.InterruptCaller))
             {
+                // Keep parent state in sync with resumed child snapshot before interrupting supervisor.
+                SyncStateSnapshot(childState, state);
                 parentConfig.SubgraphCheckpointId = activeTask.CheckpointId;
                 parentConfig.SubgraphCheckpointNs = activeTask.CheckpointNs;
                 var requestId = childState.InterruptRequestId ?? childState.InterruptCaller ?? nodeName;
-                throw new SubgraphWorkflowInterruptException(requestId, nodeName);
+                // Resume supervisor from menu first so it can decide whether to continue/switch/cancel current task.
+                throw new SubgraphWorkflowInterruptException(requestId, SupervisorNodeNames.Menu);
             }
 
             return SubGraphWorkflowCommand<TSupervisorState, TSupervisorState>.Create(childState, update: childState);
@@ -105,10 +108,13 @@ public static class TaskAsNode
 
             if (childState.InterruptReason == WorkflowInterruptReason.AskHuman && !string.IsNullOrEmpty(childState.InterruptCaller))
             {
+                var interruptUpdate = completeStateMapping(state, childState, activeTask);
+                SyncStateSnapshot(interruptUpdate, state);
                 parentConfig.SubgraphCheckpointId = activeTask.CheckpointId;
                 parentConfig.SubgraphCheckpointNs = activeTask.CheckpointNs;
                 var requestId = childState.InterruptRequestId ?? childState.InterruptCaller ?? nodeName;
-                throw new SubgraphWorkflowInterruptException(requestId, nodeName);
+                // Resume supervisor from menu first so it can decide whether to continue/switch/cancel current task.
+                throw new SubgraphWorkflowInterruptException(requestId, SupervisorNodeNames.Menu);
             }
 
             var progressUpdate = completeStateMapping(state, childState, activeTask);
@@ -180,6 +186,19 @@ public static class TaskAsNode
         activeTask.CheckpointId = childState.LastCheckpointId;
         activeTask.LastNodeId = childState.InterruptCaller;
         activeTask.UpdatedAt = DateTimeOffset.UtcNow;
+
+        if (childState is ISupervisorState childSupervisorState)
+        {
+            var taskInChild = childSupervisorState.TaskStack.LastOrDefault(x =>
+                string.Equals(x.TaskId, activeTask.TaskId, StringComparison.Ordinal));
+            if (taskInChild != null)
+            {
+                taskInChild.CheckpointNs = activeTask.CheckpointNs;
+                taskInChild.CheckpointId = activeTask.CheckpointId;
+                taskInChild.LastNodeId = activeTask.LastNodeId;
+                taskInChild.UpdatedAt = activeTask.UpdatedAt;
+            }
+        }
     }
 
     private static async Task SafeNotifyTaskAsync<TState>(
@@ -197,6 +216,21 @@ public static class TaskAsNode
         catch
         {
             // Do not let interceptor break the engine.
+        }
+    }
+
+    private static void SyncStateSnapshot<TState>(TState source, TState target)
+        where TState : WorkflowStateBase
+    {
+        if (ReferenceEquals(source, target))
+            return;
+
+        var properties = typeof(TState).GetProperties()
+            .Where(x => x.CanRead && x.CanWrite);
+
+        foreach (var property in properties)
+        {
+            property.SetValue(target, property.GetValue(source));
         }
     }
 }

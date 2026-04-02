@@ -26,12 +26,20 @@ public static class SupervisorTaskMenuNode
             var allowedTaskTypes = new HashSet<string>(
                 taskDescriptors.Select(x => x.TaskType),
                 StringComparer.OrdinalIgnoreCase);
-            var lastMessage = state.Messages.LastOrDefault();
-            if (lastMessage is not HumanMessage humanMessage || string.IsNullOrWhiteSpace(humanMessage.Content))
+            var resumeMessage = TryConsumeResumeMessage(config);
+            if (resumeMessage != null)
+            {
+                state.Messages.Add(resumeMessage);
+            }
+
+            var lastHuman = state.Messages.OfType<HumanMessage>().LastOrDefault();
+            // Menu should classify only when there is a new incoming human message for this turn.
+            // Otherwise it should ask user instead of reclassifying stale history and looping.
+            if (resumeMessage == null || lastHuman == null || string.IsNullOrWhiteSpace(lastHuman.Content))
             {
                 var ms = context.Container!.GetRequiredService<IWorkflowMessageService>();
                 var menuMessage = await ms.CreateAssistantMessageAsync(config, "", CancellationToken.None);
-                menuMessage.Content = "Choose a task: weather forecast or onboarding survey. You can also ask to switch, cancel current, cancel all, or resume a suspended task.";
+                menuMessage.Content = BuildMenuPrompt(taskDescriptors);
                 state.Messages.Add(menuMessage);
                 await ms.NotifyStreamEndAsync(config, menuMessage.Id, menuMessage.Content);
                 state.InterruptCaller = SupervisorNodeNames.Menu;
@@ -63,7 +71,7 @@ public static class SupervisorTaskMenuNode
                     new()
                     {
                         Role = "user",
-                        Content = $"Context: {payloadJson}\nUser message: {humanMessage.Content}"
+                        Content = $"Context: {payloadJson}\nUser message: {lastHuman.Content}"
                     }
                 }
             };
@@ -99,6 +107,40 @@ public static class SupervisorTaskMenuNode
             return typedEnumerable.ToArray();
 
         return [];
+    }
+
+    private static HumanMessage? TryConsumeResumeMessage(WorkflowRunnableConfig config)
+    {
+        if (!config.Configurable.TryGetValue(WorkflowConfigKeys.WorkflowCommandKey, out var commandObj))
+            return null;
+        if (commandObj is not WorkflowCommand<SupervisorRoutedChatState> command || !command.IsResume)
+            return null;
+        if (command.Resume is not HumanMessage resumeMessage)
+            return null;
+
+        command.Resume = null;
+        return resumeMessage;
+    }
+
+    private static string BuildMenuPrompt(IReadOnlyCollection<SupervisorTaskDescriptor> taskDescriptors)
+    {
+        if (taskDescriptors.Count == 0)
+        {
+            return "No tasks are configured right now. You can ask to continue, cancel current, cancel all, or resume a suspended task.";
+        }
+
+        var tasksList = string.Join(
+            "\n",
+            taskDescriptors
+                .OrderBy(x => x.TaskType)
+                .Select((x, index) =>
+                {
+                    var title = string.IsNullOrWhiteSpace(x.Name) ? x.TaskType : x.Name.Trim();
+                    var description = string.IsNullOrWhiteSpace(x.Description) ? "No description." : x.Description.Trim();
+                    return $"{index + 1}. {title} ({x.TaskType}) - {description}";
+                }));
+
+        return $"Choose a task:\n{tasksList}\n\nYou can also ask to switch, cancel current, cancel all, or resume a suspended task.";
     }
 
     private static SupervisorDecision MapDecision(
