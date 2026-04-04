@@ -165,8 +165,17 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
 			// Return current state - workflow will resume later
 			return state;
 		}
-		catch (WorkflowInterruptException interruptEx)
-		{
+		catch (TaskWorkflowInterruptException interruptEx) {
+			_logger?.LogInformation("Task workflow interrupted: {Message}", interruptEx.Message);
+			state.InterruptRequestId = interruptEx.RequestId;
+			state.InterruptCaller = SupervisorNodeNames.Menu;
+			state.InterruptReason = WorkflowInterruptReason.AskHuman;
+			await SafeNotifyInterceptorAsync(config, state, (i, c, s) => i.OnInterruptAsync(c, s));
+			await SafeNotifyInterceptorAsync(config, state, (i, c, s) => i.OnGraphCompletedAsync(c, s, WorkflowGraphCompletionReason.Interrupt));
+			await SaveCheckpointAsync(config, state, WorkflowEdges.AskHuman);
+			return state;
+		}
+		catch (WorkflowInterruptException interruptEx) {
 			_logger?.LogInformation("Workflow interrupted: {Message}", interruptEx.Message);
 
 			// var interruptResumeNode = state.InterruptCaller ?? currentNode;

@@ -44,20 +44,16 @@ public static class TaskAsNode
             {
                 activeTask.Status = WorkflowEngine.Core.Supervisor.TaskStatus.Completed;
                 activeTask.UpdatedAt = DateTimeOffset.UtcNow;
-                parentConfig.SubgraphCheckpointId = null;
-                parentConfig.SubgraphCheckpointNs = null;
                 return WorkflowCommand<TSupervisorState>.Create(update: childState);
             }
 
             if (childState.InterruptReason == WorkflowInterruptReason.AskHuman && !string.IsNullOrEmpty(childState.InterruptCaller))
             {
                 // Keep parent state in sync with resumed child snapshot before interrupting supervisor.
-                SyncStateSnapshot(childState, state);
-                parentConfig.SubgraphCheckpointId = activeTask.CheckpointId;
-                parentConfig.SubgraphCheckpointNs = activeTask.CheckpointNs;
+                // SyncStateSnapshot(childState, state);
                 var requestId = childState.InterruptRequestId ?? childState.InterruptCaller ?? nodeName;
                 // Resume supervisor from menu first so it can decide whether to continue/switch/cancel current task.
-                throw new SubgraphWorkflowInterruptException(requestId, SupervisorNodeNames.Menu);
+                throw new TaskWorkflowInterruptException(requestId, SupervisorNodeNames.Menu);
             }
 
             return SubGraphWorkflowCommand<TSupervisorState, TSupervisorState>.Create(childState, update: childState);

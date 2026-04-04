@@ -114,7 +114,7 @@ public sealed class SupervisorGraph<TSupervisorState>
         var nodeByTaskType = _taskRegistrations.ToDictionary(k => k.Key, v => v.Value.NodeName, StringComparer.OrdinalIgnoreCase);
 
         var graph = new WorkflowGraph<TSupervisorState>()
-            .AddNode(WorkflowEdges.AskHuman, AskHumanNode.Create<TSupervisorState>())
+            .AddNode(WorkflowEdges.AskHuman, AskHumanNode.Create<TSupervisorState>(new AskHumanNodeOptions { CleanResume = false }))
             .AddNode(WorkflowEdges.ErrorHandler, ErrorHandlerNode.Create<TSupervisorState>())
             .AddNode(IntentNodeName, SupervisorIntentNode.Create(_intentResolver))
             .AddNode(ApplyNodeName, SupervisorApplyDecisionNode.Create<TSupervisorState>(_stackOptions.MenuTaskType, MenuNodeName, DispatchNodeName, _stackOptions))
@@ -158,16 +158,30 @@ public sealed class SupervisorGraph<TSupervisorState>
         return async (state, context, errorHandler, config) =>
         {
             config.Configurable[SupervisorConfigKeys.AvailableTasks] = descriptors;
+            var resumeMessage = TryConsumeResumeMessage(config);
+            if (resumeMessage != null) {
+                state.Messages.Add(resumeMessage);
+            }
             return await menuNode(state, context, errorHandler, config).ConfigureAwait(false);
         };
     }
 
-    private abstract class TaskRegistrationBase(string taskType, string taskName, string taskDescription, string nodeName)
-    {
+    private static HumanMessage? TryConsumeResumeMessage(WorkflowRunnableConfig config) {
+        if (!config.Configurable.TryGetValue(WorkflowConfigKeys.WorkflowCommandKey, out var commandObj))
+            return null;
+        if (commandObj is not WorkflowCommand<TSupervisorState> command || !command.IsResume)
+            return null;
+        if (command.Resume is not HumanMessage resumeMessage)
+            return null;
+
+        // command.Resume = null; //??
+        return resumeMessage;
+    }
+
+    private abstract class TaskRegistrationBase(string taskType, string taskName, string taskDescription, string nodeName) {
         public string TaskType { get; } = taskType;
         public string NodeName { get; } = nodeName;
-        public SupervisorTaskDescriptor Descriptor { get; } = new()
-        {
+        public SupervisorTaskDescriptor Descriptor { get; } = new() {
             TaskType = taskType,
             Name = taskName,
             Description = taskDescription

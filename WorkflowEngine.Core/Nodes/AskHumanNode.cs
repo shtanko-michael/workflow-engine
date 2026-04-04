@@ -5,26 +5,28 @@ using WorkflowEngine.Core.State;
 
 namespace WorkflowEngine.Core.Nodes;
 
+public class AskHumanNodeOptions {
+    public bool CleanResume { get; set; } = true;
+}
+
 /// <summary>
 /// Node that interrupts workflow to ask for human input
 /// </summary>
-public static class AskHumanNode
-{
+public static class AskHumanNode {
     /// <summary>
     /// Creates an askHuman node
     /// </summary>
-    public static WorkflowNode<TState> Create<TState>() where TState : WorkflowStateBase
-    {
-        return WithContextNode.Wrap<TState>(WorkflowEdges.AskHuman, (state, ctx, errorHandler, config) =>
-        {
+    public static WorkflowNode<TState> Create<TState>(AskHumanNodeOptions options = null) where TState : WorkflowStateBase {
+        return WithContextNode.Wrap<TState>(WorkflowEdges.AskHuman, (state, ctx, errorHandler, config) => {
+            options ??= new AskHumanNodeOptions();
             var hasCommand = config.Configurable.TryGetValue(WorkflowConfigKeys.WorkflowCommandKey, out var command);
             if (hasCommand
                 && command is WorkflowCommand<TState> workflowCommand
                 && workflowCommand.IsResume
-            )
-            {
+            ) {
                 var resumeMessage = workflowCommand.Resume as HumanMessage;
-                workflowCommand.Resume = null;
+                // if (options.CleanResume)
+                //     workflowCommand.Resume = null;
                 var returnNode = state.InterruptCaller ?? WorkflowEdges.End;
                 state.InterruptRequestId = null;
                 state.InterruptCaller = null;

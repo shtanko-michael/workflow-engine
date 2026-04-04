@@ -29,10 +29,17 @@ public class SubgraphWorkflowInterruptException : WorkflowInterruptException
 	}
 }
 
-public class WorkflowInterruptErrorException : WorkflowInterruptException
-{
+/// <summary>
+/// Exception thrown when task workflow is interrupted (e.g., for human input)
+/// </summary>
+public class TaskWorkflowInterruptException : WorkflowInterruptException {
+	public TaskWorkflowInterruptException(string requestId, string caller)
+	  : base(requestId, caller) {
+	}
+}
+
+public class WorkflowInterruptErrorException : WorkflowInterruptException {
 	public WorkflowInterruptErrorException(string requestId, string caller)
-		: base(requestId, caller)
-	{
+		: base(requestId, caller) {
 	}
 }

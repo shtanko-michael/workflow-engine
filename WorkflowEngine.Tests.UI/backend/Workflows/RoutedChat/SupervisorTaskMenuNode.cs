@@ -26,16 +26,16 @@ public static class SupervisorTaskMenuNode
             var allowedTaskTypes = new HashSet<string>(
                 taskDescriptors.Select(x => x.TaskType),
                 StringComparer.OrdinalIgnoreCase);
-            var resumeMessage = TryConsumeResumeMessage(config);
-            if (resumeMessage != null)
-            {
-                state.Messages.Add(resumeMessage);
-            }
+            // var resumeMessage = TryConsumeResumeMessage(config);
+            // if (resumeMessage != null)
+            // {
+            //     state.Messages.Add(resumeMessage);
+            // }
 
             var lastHuman = state.Messages.OfType<HumanMessage>().LastOrDefault();
             // Menu should classify only when there is a new incoming human message for this turn.
             // Otherwise it should ask user instead of reclassifying stale history and looping.
-            if (resumeMessage == null || lastHuman == null || string.IsNullOrWhiteSpace(lastHuman.Content))
+            if (lastHuman == null || string.IsNullOrWhiteSpace(lastHuman.Content))
             {
                 var ms = context.Container!.GetRequiredService<IWorkflowMessageService>();
                 var menuMessage = await ms.CreateAssistantMessageAsync(config, "", CancellationToken.None);
@@ -91,7 +91,9 @@ public static class SupervisorTaskMenuNode
 
             return WorkflowCommand<SupervisorRoutedChatState>.Create(
                 gotoNode: SupervisorNodeNames.Intent,
-                update: state);
+                update: state,
+                // use lastHuman as resume message to keep the context inside of task workflow
+                resume: lastHuman);
         });
     }
 
