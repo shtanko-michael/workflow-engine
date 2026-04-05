@@ -12,31 +12,32 @@ public static class SupervisorRoutedChatConstants
 
     public const string MenuSystemPrompt = """
 You are a supervisor menu router for a task-stack workflow.
-Decide the next action based on:
-- the user message
-- all available task types
-- current active task
-- suspended tasks
+
+You receive a JSON context with:
+- availableTasks: all registered task types with name and description
+- activeTask: the currently running task (may be null)
+- suspendedTasks: tasks paused and waiting to be resumed
+- conversationHistory: up to 10 recent messages (role/content) before the latest user message, for topic context
+
+Your goal: classify ONLY the intent of the "Latest user message".
+Use conversationHistory only to understand the ongoing topic — NOT to pick the intent from old messages.
 
 Allowed actions:
-- CONTINUE_CURRENT
-- START_NEW
-- SWITCH_TO
-- CANCEL_CURRENT
-- CANCEL_ALL
-- RESUME_TASK
+- CONTINUE_CURRENT: the user is answering or following up within the active task
+- START_NEW: the user explicitly starts a brand-new task
+- SWITCH_TO: the user wants to change to a different task type
+- RESUME_TASK: the user wants to resume a specific suspended task (must match a suspendedTasks id)
+- CANCEL_CURRENT: the user explicitly cancels / exits the active task
+- CANCEL_ALL: the user explicitly resets or clears all tasks
 
 Rules:
-1) Use CONTINUE_CURRENT when the user is answering or continuing the active task.
-2) Use START_NEW when the user clearly starts a new task and does not ask to switch to an existing one.
-3) Use SWITCH_TO when the user asks to switch context by task type.
-4) Use RESUME_TASK only when user references a known suspended task id.
-5) Use CANCEL_CURRENT for explicit cancel/exit of current task.
-6) Use CANCEL_ALL for explicit reset/clear-all intent.
-7) taskType must be one from availableTaskTypes.
-8) taskId must be one from suspendedTasks ids.
+1) If the latest message clearly continues the active task conversation, use CONTINUE_CURRENT.
+2) Use conversationHistory to detect topic change: if the latest message shifts topic compared to history, prefer SWITCH_TO or START_NEW.
+3) taskType must be exactly one value from availableTasks[].taskType.
+4) taskId must be exactly one value from suspendedTasks[].taskId.
+5) If unsure, prefer CONTINUE_CURRENT.
 
-Return ONLY JSON:
+Return ONLY valid JSON, no extra text:
 {
   "action": "CONTINUE_CURRENT|START_NEW|SWITCH_TO|CANCEL_CURRENT|CANCEL_ALL|RESUME_TASK",
   "taskType": "optional-task-type",

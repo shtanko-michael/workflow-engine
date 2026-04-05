@@ -53,6 +53,25 @@ public static class SupervisorTaskMenuNode
                 .Where(x => x.Status == WorkflowEngine.Core.Supervisor.TaskStatus.Suspended)
                 .Select(x => new { x.TaskId, x.TaskType })
                 .ToArray();
+
+            // Build conversation history: last 10 messages excluding the current lastHuman,
+            // so the LLM understands the ongoing topic before deciding whether user is switching or continuing.
+            var recentHistory = state.Messages
+                .Where(m => !ReferenceEquals(m, lastHuman))
+                .TakeLast(10)
+                .Select(m => new
+                {
+                    role = m is HumanMessage ? "user" : "assistant",
+                    content = m switch
+                    {
+                        HumanMessage hm => hm.Content ?? string.Empty,
+                        AIMessage ai => ai.Content ?? string.Empty,
+                        _ => string.Empty
+                    }
+                })
+                .Where(m => !string.IsNullOrWhiteSpace(m.content))
+                .ToArray();
+
             var payload = new
             {
                 availableTasks = taskDescriptors
@@ -60,7 +79,8 @@ public static class SupervisorTaskMenuNode
                     .OrderBy(x => x.TaskType)
                     .ToArray(),
                 activeTask = activeTask == null ? null : new { activeTask.TaskId, activeTask.TaskType, activeTask.Status },
-                suspendedTasks
+                suspendedTasks,
+                conversationHistory = recentHistory
             };
             var payloadJson = JsonSerializer.Serialize(payload);
             var classifyRequest = new LLMRequest
@@ -71,7 +91,7 @@ public static class SupervisorTaskMenuNode
                     new()
                     {
                         Role = "user",
-                        Content = $"Context: {payloadJson}\nUser message: {lastHuman.Content}"
+                        Content = $"Context: {payloadJson}\nLatest user message to classify: {lastHuman.Content}"
                     }
                 }
             };

@@ -11,27 +11,27 @@ namespace WorkflowEngine.Core.Graph;
 /// Wraps a compiled task graph so it can be used as a node in a supervisor graph.
 /// Task checkpoints are synchronized with the active task in the supervisor task stack.
 /// </summary>
-public static class TaskAsNode
-{
+public static class TaskAsNode {
     public static WorkflowNode<TSupervisorState> Create<TSupervisorState>(
         CompiledWorkflowGraph<TSupervisorState> taskGraph,
         string nodeName,
         string taskType)
-        where TSupervisorState : WorkflowStateBase, ISupervisorState
-    {
+        where TSupervisorState : WorkflowStateBase, ISupervisorState {
         ArgumentNullException.ThrowIfNull(taskGraph);
         Validate(nodeName, taskType);
 
-        return async (state, _, _, parentConfig) =>
-        {
+        return async (state, _, _, parentConfig) => {
             var activeTask = GetActiveTask(state, taskType);
             var childConfig = BuildChildConfig(parentConfig, nodeName, taskType, activeTask);
             var parentCommand = parentConfig.Configurable.TryGetValue(WorkflowConfigKeys.WorkflowCommandKey, out var cmdObj)
                 ? cmdObj as WorkflowCommand<TSupervisorState>
                 : null;
+            var childStateUpdate = string.IsNullOrEmpty(activeTask.CheckpointId) ? Activator.CreateInstance<TSupervisorState>() : null;
+            if (childStateUpdate != null && state.Messages.Count > 0)
+                childStateUpdate.Messages.Add(state.Messages.LastOrDefault());
             var commandToChild = WorkflowCommand<TSupervisorState>.Create(
-                update: string.IsNullOrEmpty(activeTask.CheckpointId) ? state : null,
-                resume: parentCommand?.Resume);
+                update: childStateUpdate,
+                resume: !string.IsNullOrEmpty(activeTask.CheckpointId) ? (state.Messages.LastOrDefault() is HumanMessage ? state.Messages.LastOrDefault() : true) : null);
             parentConfig.Configurable.Remove(WorkflowConfigKeys.WorkflowCommandKey);
 
             await SafeNotifyTaskAsync(parentConfig, state, (i, c, s) => i.OnSubgraphStartedAsync(nodeName, c, s));
@@ -40,15 +40,16 @@ public static class TaskAsNode
 
             SyncTaskCheckpoint(activeTask, childConfig, childState);
 
-            if (childState.WorkflowCompleted)
-            {
+            if (childState.Messages.LastOrDefault() is AIMessage aiMessage)
+                state.Messages.Add(aiMessage);
+
+            if (childState.WorkflowCompleted) {
                 activeTask.Status = WorkflowEngine.Core.Supervisor.TaskStatus.Completed;
                 activeTask.UpdatedAt = DateTimeOffset.UtcNow;
                 return WorkflowCommand<TSupervisorState>.Create(update: childState);
             }
 
-            if (childState.InterruptReason == WorkflowInterruptReason.AskHuman && !string.IsNullOrEmpty(childState.InterruptCaller))
-            {
+            if (childState.InterruptReason == WorkflowInterruptReason.AskHuman && !string.IsNullOrEmpty(childState.InterruptCaller)) {
                 // Keep parent state in sync with resumed child snapshot before interrupting supervisor.
                 // SyncStateSnapshot(childState, state);
                 var requestId = childState.InterruptRequestId ?? childState.InterruptCaller ?? nodeName;
@@ -67,15 +68,13 @@ public static class TaskAsNode
         Func<TSupervisorState, TaskInstance, TTaskState> initialStateMapping,
         Func<TSupervisorState, TTaskState, TaskInstance, TSupervisorState> completeStateMapping)
         where TSupervisorState : WorkflowStateBase, ISupervisorState
-        where TTaskState : WorkflowStateBase
-    {
+        where TTaskState : WorkflowStateBase {
         ArgumentNullException.ThrowIfNull(taskGraph);
         Validate(nodeName, taskType);
         ArgumentNullException.ThrowIfNull(initialStateMapping);
         ArgumentNullException.ThrowIfNull(completeStateMapping);
 
-        return async (state, _, _, parentConfig) =>
-        {
+        return async (state, _, _, parentConfig) => {
             var activeTask = GetActiveTask(state, taskType);
             var childConfig = BuildChildConfig(parentConfig, nodeName, taskType, activeTask);
             var parentCommand = parentConfig.Configurable.TryGetValue(WorkflowConfigKeys.WorkflowCommandKey, out var cmdObj)
@@ -92,8 +91,7 @@ public static class TaskAsNode
 
             SyncTaskCheckpoint(activeTask, childConfig, childState);
 
-            if (childState.WorkflowCompleted)
-            {
+            if (childState.WorkflowCompleted) {
                 activeTask.Status = WorkflowEngine.Core.Supervisor.TaskStatus.Completed;
                 activeTask.UpdatedAt = DateTimeOffset.UtcNow;
                 parentConfig.SubgraphCheckpointId = null;
@@ -102,8 +100,7 @@ public static class TaskAsNode
                 return SubGraphWorkflowCommand<TTaskState, TSupervisorState>.Create(childState, update: merged);
             }
 
-            if (childState.InterruptReason == WorkflowInterruptReason.AskHuman && !string.IsNullOrEmpty(childState.InterruptCaller))
-            {
+            if (childState.InterruptReason == WorkflowInterruptReason.AskHuman && !string.IsNullOrEmpty(childState.InterruptCaller)) {
                 var interruptUpdate = completeStateMapping(state, childState, activeTask);
                 SyncStateSnapshot(interruptUpdate, state);
                 parentConfig.SubgraphCheckpointId = activeTask.CheckpointId;
@@ -118,8 +115,7 @@ public static class TaskAsNode
         };
     }
 
-    private static void Validate(string nodeName, string taskType)
-    {
+    private static void Validate(string nodeName, string taskType) {
         if (string.IsNullOrWhiteSpace(nodeName))
             throw new ArgumentException("Node name is required for task namespace.", nameof(nodeName));
         if (nodeName.Contains(':'))
@@ -129,8 +125,7 @@ public static class TaskAsNode
     }
 
     private static TaskInstance GetActiveTask<TSupervisorState>(TSupervisorState state, string taskType)
-        where TSupervisorState : ISupervisorState
-    {
+        where TSupervisorState : ISupervisorState {
         var top = TaskStackReducer.GetCurrentTask(state);
         if (top == null)
             throw new InvalidOperationException("Active task is not available.");
@@ -143,8 +138,7 @@ public static class TaskAsNode
         WorkflowRunnableConfig parentConfig,
         string nodeName,
         string taskType,
-        TaskInstance activeTask)
-    {
+        TaskInstance activeTask) {
         var parentNs = parentConfig.Configurable.TryGetValue(WorkflowConfigKeys.CheckpointNs, out var ns)
             ? ns?.ToString() ?? string.Empty
             : string.Empty;
@@ -152,21 +146,18 @@ public static class TaskAsNode
         if (string.IsNullOrWhiteSpace(childNs))
             childNs = BuildTaskNamespace(parentNs, taskType, activeTask.TaskId, nodeName);
 
-        var configurable = new Dictionary<string, object>(parentConfig.Configurable)
-        {
+        var configurable = new Dictionary<string, object>(parentConfig.Configurable) {
             [WorkflowConfigKeys.CheckpointNs] = childNs,
             [WorkflowConfigKeys.CheckpointId] = activeTask.CheckpointId,
         };
         configurable.Remove(WorkflowConfigKeys.ParentCheckpointId);
-        return new WorkflowRunnableConfig
-        {
+        return new WorkflowRunnableConfig {
             Configurable = configurable,
             Context = parentConfig.Context
         };
     }
 
-    private static string BuildTaskNamespace(string parentNs, string taskType, string taskId, string nodeName)
-    {
+    private static string BuildTaskNamespace(string parentNs, string taskType, string taskId, string nodeName) {
         var normalizedTaskType = taskType.Replace(':', '_');
         if (string.IsNullOrEmpty(parentNs))
             return $"task:{normalizedTaskType}:{taskId}:{nodeName}";
@@ -176,19 +167,16 @@ public static class TaskAsNode
     private static void SyncTaskCheckpoint<TTaskState>(
         TaskInstance activeTask,
         WorkflowRunnableConfig childConfig,
-        TTaskState childState) where TTaskState : WorkflowStateBase
-    {
+        TTaskState childState) where TTaskState : WorkflowStateBase {
         activeTask.CheckpointNs = childConfig.CheckpointNs;
         activeTask.CheckpointId = childState.LastCheckpointId;
         activeTask.LastNodeId = childState.InterruptCaller;
         activeTask.UpdatedAt = DateTimeOffset.UtcNow;
 
-        if (childState is ISupervisorState childSupervisorState)
-        {
+        if (childState is ISupervisorState childSupervisorState) {
             var taskInChild = childSupervisorState.TaskStack.LastOrDefault(x =>
                 string.Equals(x.TaskId, activeTask.TaskId, StringComparison.Ordinal));
-            if (taskInChild != null)
-            {
+            if (taskInChild != null) {
                 taskInChild.CheckpointNs = activeTask.CheckpointNs;
                 taskInChild.CheckpointId = activeTask.CheckpointId;
                 taskInChild.LastNodeId = activeTask.LastNodeId;
@@ -201,31 +189,25 @@ public static class TaskAsNode
         WorkflowRunnableConfig config,
         TState state,
         Func<IWorkflowRunInterceptor, WorkflowRunnableConfig, TState, Task> invoke)
-        where TState : WorkflowStateBase
-    {
+        where TState : WorkflowStateBase {
         if (config.Context?.Interceptor is not IWorkflowRunInterceptor interceptor)
             return;
-        try
-        {
+        try {
             await invoke(interceptor, config, state);
-        }
-        catch
-        {
+        } catch {
             // Do not let interceptor break the engine.
         }
     }
 
     private static void SyncStateSnapshot<TState>(TState source, TState target)
-        where TState : WorkflowStateBase
-    {
+        where TState : WorkflowStateBase {
         if (ReferenceEquals(source, target))
             return;
 
         var properties = typeof(TState).GetProperties()
             .Where(x => x.CanRead && x.CanWrite);
 
-        foreach (var property in properties)
-        {
+        foreach (var property in properties) {
             property.SetValue(target, property.GetValue(source));
         }
     }

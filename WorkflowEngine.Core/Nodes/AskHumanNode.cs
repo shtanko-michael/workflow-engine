@@ -26,7 +26,7 @@ public static class AskHumanNode {
             ) {
                 var resumeMessage = workflowCommand.Resume as HumanMessage;
                 // if (options.CleanResume)
-                //     workflowCommand.Resume = null;
+                workflowCommand.Resume = null;
                 var returnNode = state.InterruptCaller ?? WorkflowEdges.End;
                 state.InterruptRequestId = null;
                 state.InterruptCaller = null;
