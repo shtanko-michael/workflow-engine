@@ -80,38 +80,46 @@ public static class TaskAsNode {
             var parentCommand = parentConfig.Configurable.TryGetValue(WorkflowConfigKeys.WorkflowCommandKey, out var cmdObj)
                 ? cmdObj as WorkflowCommand<TSupervisorState>
                 : null;
+            // resume with last human message if parent command is not resume
+            var resume = parentCommand?.Resume ?? state.Messages.LastOrDefault() as HumanMessage; ;
             var commandToChild = WorkflowCommand<TTaskState>.Create(
                 update: string.IsNullOrEmpty(activeTask.CheckpointId) ? initialStateMapping(state, activeTask) : null,
-                resume: parentCommand?.Resume);
+                resume: string.IsNullOrEmpty(activeTask.CheckpointId) ? null : resume);
             parentConfig.Configurable.Remove(WorkflowConfigKeys.WorkflowCommandKey);
 
-            await SafeNotifyTaskAsync(parentConfig, state, (i, c, s) => i.OnSubgraphStartedAsync(nodeName, c, s));
-            var childState = await taskGraph.InvokeAsync(commandToChild, childConfig);
-            await SafeNotifyTaskAsync(parentConfig, state, (i, c, s) => i.OnSubgraphCompletedAsync(nodeName, c, s));
+            try {
+                await SafeNotifyTaskAsync(parentConfig, state, (i, c, s) => i.OnSubgraphStartedAsync(nodeName, c, s));
 
-            SyncTaskCheckpoint(activeTask, childConfig, childState);
+                var childState = await taskGraph.InvokeAsync(commandToChild, childConfig);
 
-            if (childState.WorkflowCompleted) {
-                activeTask.Status = WorkflowEngine.Core.Supervisor.TaskStatus.Completed;
-                activeTask.UpdatedAt = DateTimeOffset.UtcNow;
-                parentConfig.SubgraphCheckpointId = null;
-                parentConfig.SubgraphCheckpointNs = null;
-                var merged = completeStateMapping(state, childState, activeTask);
-                return SubGraphWorkflowCommand<TTaskState, TSupervisorState>.Create(childState, update: merged);
+                await SafeNotifyTaskAsync(parentConfig, state, (i, c, s) => i.OnSubgraphCompletedAsync(nodeName, c, s));
+
+                SyncTaskCheckpoint(activeTask, childConfig, childState);
+
+                if (childState.WorkflowCompleted) {
+                    activeTask.Status = WorkflowEngine.Core.Supervisor.TaskStatus.Completed;
+                    activeTask.UpdatedAt = DateTimeOffset.UtcNow;
+                    parentConfig.SubgraphCheckpointId = null;
+                    parentConfig.SubgraphCheckpointNs = null;
+                    var merged = completeStateMapping(state, childState, activeTask);
+                    return SubGraphWorkflowCommand<TTaskState, TSupervisorState>.Create(childState, update: merged);
+                }
+
+                if (childState.InterruptReason == WorkflowInterruptReason.AskHuman && !string.IsNullOrEmpty(childState.InterruptCaller)) {
+                    var interruptUpdate = completeStateMapping(state, childState, activeTask);
+                    SyncStateSnapshot(interruptUpdate, state);
+                    parentConfig.SubgraphCheckpointId = activeTask.CheckpointId;
+                    parentConfig.SubgraphCheckpointNs = activeTask.CheckpointNs;
+                    var requestId = childState.InterruptRequestId ?? childState.InterruptCaller ?? nodeName;
+                    // Resume supervisor from menu first so it can decide whether to continue/switch/cancel current task.
+                    throw new SubgraphWorkflowInterruptException(requestId, SupervisorNodeNames.Menu);
+                }
+
+                var progressUpdate = completeStateMapping(state, childState, activeTask);
+                return SubGraphWorkflowCommand<TTaskState, TSupervisorState>.Create(childState, update: progressUpdate);
+            } catch (SubgraphWorkflowInterruptException ex) {
+                throw new TaskWorkflowInterruptException(ex.RequestId, ex.Caller);
             }
-
-            if (childState.InterruptReason == WorkflowInterruptReason.AskHuman && !string.IsNullOrEmpty(childState.InterruptCaller)) {
-                var interruptUpdate = completeStateMapping(state, childState, activeTask);
-                SyncStateSnapshot(interruptUpdate, state);
-                parentConfig.SubgraphCheckpointId = activeTask.CheckpointId;
-                parentConfig.SubgraphCheckpointNs = activeTask.CheckpointNs;
-                var requestId = childState.InterruptRequestId ?? childState.InterruptCaller ?? nodeName;
-                // Resume supervisor from menu first so it can decide whether to continue/switch/cancel current task.
-                throw new SubgraphWorkflowInterruptException(requestId, SupervisorNodeNames.Menu);
-            }
-
-            var progressUpdate = completeStateMapping(state, childState, activeTask);
-            return SubGraphWorkflowCommand<TTaskState, TSupervisorState>.Create(childState, update: progressUpdate);
         };
     }
 

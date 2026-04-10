@@ -26,33 +26,30 @@ public static class SupervisorTaskMenuNode
             var allowedTaskTypes = new HashSet<string>(
                 taskDescriptors.Select(x => x.TaskType),
                 StringComparer.OrdinalIgnoreCase);
-            // var resumeMessage = TryConsumeResumeMessage(config);
-            // if (resumeMessage != null)
-            // {
-            //     state.Messages.Add(resumeMessage);
-            // }
+            var activeTask = TaskStackReducer.GetCurrentTask(state);
+            var suspendedTasks = state.TaskStack
+                .Where(x => x.Status == WorkflowEngine.Core.Supervisor.TaskStatus.Suspended)
+                .Select(x => new SuspendedTaskInfo(x.TaskId, x.TaskType))
+                .ToArray();
 
-            var lastHuman = state.Messages.OfType<HumanMessage>().LastOrDefault();
-            // Menu should classify only when there is a new incoming human message for this turn.
-            // Otherwise it should ask user instead of reclassifying stale history and looping.
+            // Only classify intent when the very last message in the list is from the user.
+            // If the last message is from AI (e.g. task asked a question), we must not re-classify
+            // stale history — instead ask the user for new input to avoid looping.
+            var lastHuman = state.Messages.LastOrDefault() as HumanMessage;
             if (lastHuman == null || string.IsNullOrWhiteSpace(lastHuman.Content))
             {
                 var ms = context.Container!.GetRequiredService<IWorkflowMessageService>();
                 var menuMessage = await ms.CreateAssistantMessageAsync(config, "", CancellationToken.None);
-                menuMessage.Content = BuildMenuPrompt(taskDescriptors);
+                var menuUx = await BuildMenuMessageWithLlmAsync(scopeFactory, taskDescriptors, activeTask, suspendedTasks).ConfigureAwait(false);
+                menuMessage.Content = menuUx.Message;
+                menuMessage.Options = menuUx.Options;
                 state.Messages.Add(menuMessage);
-                await ms.NotifyStreamEndAsync(config, menuMessage.Id, menuMessage.Content);
+                await ms.NotifyStreamEndAsync(config, menuMessage.Id, menuMessage.Content, menuMessage.Options);
                 state.InterruptCaller = SupervisorNodeNames.Menu;
                 return WorkflowCommand<SupervisorRoutedChatState>.Create(
                     gotoNode: WorkflowEdges.AskHuman,
                     update: state);
             }
-
-            var activeTask = TaskStackReducer.GetCurrentTask(state);
-            var suspendedTasks = state.TaskStack
-                .Where(x => x.Status == WorkflowEngine.Core.Supervisor.TaskStatus.Suspended)
-                .Select(x => new { x.TaskId, x.TaskType })
-                .ToArray();
 
             // Build conversation history: last 10 messages excluding the current lastHuman,
             // so the LLM understands the ongoing topic before deciding whether user is switching or continuing.
@@ -165,6 +162,123 @@ public static class SupervisorTaskMenuNode
         return $"Choose a task:\n{tasksList}\n\nYou can also ask to switch, cancel current, cancel all, or resume a suspended task.";
     }
 
+    private static async Task<(string Message, string[]? Options)> BuildMenuMessageWithLlmAsync(
+        IServiceScopeFactory scopeFactory,
+        IReadOnlyCollection<SupervisorTaskDescriptor> taskDescriptors,
+        TaskInstance? activeTask,
+        IEnumerable<SuspendedTaskInfo> suspendedTasks)
+    {
+        var suspendedArray = suspendedTasks.ToArray();
+        var fallbackMessage = BuildMenuPrompt(taskDescriptors, activeTask, suspendedArray);
+        var fallbackOptions = BuildDefaultMenuOptions(taskDescriptors, suspendedArray);
+
+        var payload = new
+        {
+            availableTasks = taskDescriptors
+                .Select(x => new { x.TaskType, x.Name, x.Description })
+                .OrderBy(x => x.TaskType)
+                .ToArray(),
+            activeTask = activeTask == null ? null : new { activeTask.TaskId, activeTask.TaskType, activeTask.Status },
+            suspendedTasks = suspendedArray
+        };
+
+        var request = new LLMRequest
+        {
+            Messages = new List<LLMMessage>
+            {
+                new() { Role = "system", Content = SupervisorRoutedChatConstants.MenuPresentationSystemPrompt },
+                new() { Role = "user", Content = $"Context: {JsonSerializer.Serialize(payload)}" }
+            }
+        };
+
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var llm = scope.ServiceProvider.GetRequiredService<ILLMProviderClient>();
+            var response = await llm.ExecuteWithStructuredOutputAsync<SupervisorMenuPresentationStructuredOutput>(
+                request,
+                model: null,
+                CancellationToken.None).ConfigureAwait(false);
+
+            var llmMessage = response.Output?.Message?.Trim();
+            var llmOptions = response.Output?.Options?
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .Distinct(StringComparer.Ordinal)
+                .Take(6)
+                .ToArray();
+
+            return (
+                string.IsNullOrWhiteSpace(llmMessage) ? fallbackMessage : llmMessage!,
+                llmOptions is { Length: > 0 } ? llmOptions : fallbackOptions);
+        }
+        catch
+        {
+            // Keep menu functional even if LLM menu rendering fails.
+            return (fallbackMessage, fallbackOptions);
+        }
+    }
+
+    private static string BuildMenuPrompt(
+        IReadOnlyCollection<SupervisorTaskDescriptor> taskDescriptors,
+        TaskInstance? activeTask,
+        IEnumerable<SuspendedTaskInfo> suspendedTasks)
+    {
+        var suspendedList = suspendedTasks.ToArray();
+        var activeLine = activeTask == null
+            ? "There is no active task right now."
+            : $"Active task: {activeTask.TaskType}.";
+
+        if (taskDescriptors.Count == 0)
+        {
+            if (suspendedList.Length == 0)
+                return $"{activeLine} No tasks are configured right now.";
+
+            var suspendedText = string.Join(", ", suspendedList.Select(x => $"{x.TaskType} ({x.TaskId})"));
+            return $"{activeLine} Suspended tasks: {suspendedText}. You can resume one of them.";
+        }
+
+        var tasksList = string.Join(
+            "\n",
+            taskDescriptors
+                .OrderBy(x => x.TaskType)
+                .Select((x, index) =>
+                {
+                    var title = string.IsNullOrWhiteSpace(x.Name) ? x.TaskType : x.Name.Trim();
+                    var description = string.IsNullOrWhiteSpace(x.Description) ? "No description." : x.Description.Trim();
+                    return $"{index + 1}. {title} ({x.TaskType}) - {description}";
+                }));
+
+        if (suspendedList.Length > 0)
+        {
+            var suspendedText = string.Join(", ", suspendedList.Select(x => $"{x.TaskType} ({x.TaskId})"));
+            return $"{activeLine}\nSuspended tasks: {suspendedText}.\nChoose one to resume, or start another task:\n{tasksList}";
+        }
+
+        return $"{activeLine}\nChoose a task:\n{tasksList}\n\nYou can also ask to switch, cancel current, or cancel all.";
+    }
+
+    private static string[]? BuildDefaultMenuOptions(
+        IReadOnlyCollection<SupervisorTaskDescriptor> taskDescriptors,
+        IEnumerable<SuspendedTaskInfo> suspendedTasks)
+    {
+        var resumeOptions = suspendedTasks
+            .Select(x => $"Resume {x.TaskType} ({x.TaskId})")
+            .Distinct(StringComparer.Ordinal)
+            .Take(6)
+            .ToArray();
+        if (resumeOptions.Length > 0)
+            return resumeOptions;
+
+        var startOptions = taskDescriptors
+            .OrderBy(x => x.TaskType)
+            .Select(x => $"Start {(string.IsNullOrWhiteSpace(x.Name) ? x.TaskType : x.Name.Trim())}")
+            .Distinct(StringComparer.Ordinal)
+            .Take(6)
+            .ToArray();
+        return startOptions.Length > 0 ? startOptions : null;
+    }
+
     private static SupervisorDecision MapDecision(
         SupervisorMenuStructuredOutput? output,
         HashSet<string> allowedTaskTypes,
@@ -192,4 +306,6 @@ public static class SupervisorTaskMenuNode
             _ => SupervisorDecision.Continue($"fallback-invalid:{action}")
         };
     }
+
+    private sealed record SuspendedTaskInfo(string TaskId, string TaskType);
 }

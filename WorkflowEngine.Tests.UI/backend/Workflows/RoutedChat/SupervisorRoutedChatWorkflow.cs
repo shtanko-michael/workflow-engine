@@ -4,6 +4,7 @@ using WorkflowEngine.Core.Registry;
 using WorkflowEngine.Core.Supervisor;
 using WorkflowEngine.Tests.UI.Backend.Workflows.Onboarding;
 using WorkflowEngine.Tests.UI.Backend.Workflows.RoutedChat.Weather;
+using WorkflowEngine.Tests.UI.Backend.Workflows.RoutedChat.Support;
 
 namespace WorkflowEngine.Tests.UI.Backend.Workflows.RoutedChat;
 
@@ -26,6 +27,10 @@ public static class SupervisorRoutedChatWorkflow
 
         var onboardingDeclaration = OnboardingWorkflow.Build(scopeFactory);
         var compiledOnboarding = onboardingDeclaration.Workflow.Compile(checkpointerFactory);
+        var taskSupportGraph = new WorkflowGraph<TaskSupportState>()
+            .AddNode("answer", TaskSupportAnswerNode.Create(scopeFactory))
+            .AddEdge(WorkflowEdges.Start, "answer");
+        var compiledTaskSupport = taskSupportGraph.Compile(checkpointerFactory);
 
         var workflow = new SupervisorGraph<SupervisorRoutedChatState>()
             .SetMenuNode(
@@ -71,7 +76,31 @@ public static class SupervisorRoutedChatWorkflow
                     return parent;
                 },
                 taskName: "Onboarding survey",
-                taskDescription: "Run onboarding questionnaire and collect profile information");
+                taskDescription: "Run onboarding questionnaire and collect profile information")
+            .RegisterTask(
+                SupervisorRoutedChatConstants.TaskSupportTaskType,
+                compiledTaskSupport,
+                initialStateMapping: (parent, _) => new TaskSupportState
+                {
+                    Messages = parent.Messages.Count > 0 ? [parent.Messages.Last()] : [],
+                    TaskStackSnapshot = parent.TaskStack
+                        .Select(x => new TaskSnapshotItem
+                        {
+                            TaskId = x.TaskId,
+                            TaskType = x.TaskType,
+                            Status = x.Status.ToString(),
+                            UpdatedAt = x.UpdatedAt
+                        })
+                        .ToArray()
+                },
+                completeStateMapping: (parent, sub, _) =>
+                {
+                    if (sub.Messages.Count > 0 && sub.Messages.Last() is { } lastMsg)
+                        parent.Messages = parent.Messages.Append(lastMsg).ToList();
+                    return parent;
+                },
+                taskName: "Task support",
+                taskDescription: "Answer meta questions about current tasks, statuses, and progress using internal tools.");
 
         return new WorkflowDeclaration<SupervisorRoutedChatState>
         {

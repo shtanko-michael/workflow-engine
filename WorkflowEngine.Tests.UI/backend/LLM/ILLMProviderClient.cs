@@ -14,6 +14,14 @@ public interface ILLMProviderClient
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Execute completion with optional tool-calling. Provider decides when to call tools and returns final answer.
+    /// </summary>
+    Task<LLMResponse> ExecuteWithToolsAsync(
+        LLMRequest request,
+        string? model = null,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Execute chat completion and deserialize response as JSON into T.
     /// </summary>
     Task<LLMResponse<TOutput>> ExecuteWithStructuredOutputAsync<TOutput>(

@@ -65,6 +65,121 @@ public sealed class OpenAILLMProvider : ILLMProviderClient
         return new LLMResponse { Content = content, Model = m };
     }
 
+    public async Task<LLMResponse> ExecuteWithToolsAsync(
+        LLMRequest request,
+        string? model = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (request == null) throw new ArgumentNullException(nameof(request));
+        if (request.Tools == null || request.Tools.Count == 0)
+            return await ExecuteAsync(request, model, cancellationToken).ConfigureAwait(false);
+
+        var toolsByName = request.Tools
+            .Where(t => t != null && !string.IsNullOrWhiteSpace(t.Name))
+            .GroupBy(t => t.Name.Trim(), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
+        if (toolsByName.Count == 0)
+            return await ExecuteAsync(request, model, cancellationToken).ConfigureAwait(false);
+
+        var transcript = new List<LLMMessage>(request.Messages ?? []);
+        var iterations = Math.Clamp(request.MaxToolIterations, 1, 12);
+        var toolChoice = string.IsNullOrWhiteSpace(request.ToolChoice) ? "auto" : request.ToolChoice.Trim().ToLowerInvariant();
+
+        for (var i = 0; i < iterations; i++)
+        {
+            var decisionRequest = new LLMRequest
+            {
+                Messages = new List<LLMMessage>
+                {
+                    new() { Role = "system", Content = BuildToolCallingSystemPrompt(request.Tools, toolChoice) },
+                }
+            };
+            decisionRequest.Messages.AddRange(transcript);
+
+            var decisionResponse = await ExecuteWithStructuredOutputAsync<ToolCallDecision>(
+                decisionRequest,
+                model,
+                cancellationToken).ConfigureAwait(false);
+
+            var decision = decisionResponse.Output;
+            if (decision == null)
+            {
+                return new LLMResponse
+                {
+                    Content = decisionResponse.Content,
+                    Model = decisionResponse.Model
+                };
+            }
+
+            var action = (decision.Action ?? string.Empty).Trim().ToUpperInvariant();
+            if (action == "FINAL" || toolChoice == "none")
+            {
+                return new LLMResponse
+                {
+                    Content = decision.FinalAnswer?.Trim() ?? decisionResponse.Content,
+                    Model = decisionResponse.Model
+                };
+            }
+
+            if (action != "TOOL_CALL")
+            {
+                return new LLMResponse
+                {
+                    Content = decision.FinalAnswer?.Trim() ?? decisionResponse.Content,
+                    Model = decisionResponse.Model
+                };
+            }
+
+            var toolName = decision.ToolName?.Trim() ?? string.Empty;
+            if (!toolsByName.TryGetValue(toolName, out var tool) || tool.ExecuteAsync == null)
+            {
+                transcript.Add(new LLMMessage
+                {
+                    Role = "user",
+                    Content = $"Tool call failed: unknown tool '{toolName}'. Provide final answer without additional tool calls."
+                });
+                continue;
+            }
+
+            var argsJson = string.IsNullOrWhiteSpace(decision.ArgumentsJson) ? "{}" : decision.ArgumentsJson!;
+            string toolResult;
+            try
+            {
+                toolResult = await tool.ExecuteAsync(argsJson).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                toolResult = $"{{\"error\":\"tool execution failed\",\"details\":{JsonSerializer.Serialize(ex.Message)}}}";
+            }
+
+            transcript.Add(new LLMMessage
+            {
+                Role = "assistant",
+                Content = $"Tool call requested: {tool.Name} with args: {argsJson}"
+            });
+            transcript.Add(new LLMMessage
+            {
+                Role = "user",
+                Content = $"Tool result from {tool.Name}: {toolResult}"
+            });
+        }
+
+        var fallbackRequest = new LLMRequest
+        {
+            Messages = new List<LLMMessage>
+            {
+                new()
+                {
+                    Role = "system",
+                    Content = "Provide the best final answer to the user based on previous tool results. Do not call tools again."
+                }
+            }
+        };
+        fallbackRequest.Messages.AddRange(transcript);
+        return await ExecuteAsync(fallbackRequest, model, cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task<LLMResponse> ExecuteStreamAsync(
         LLMRequest request,
         Func<string, Task>? onChunk,
@@ -267,6 +382,52 @@ public sealed class OpenAILLMProvider : ILLMProviderClient
             items.Add(ResponseItem.CreateUserMessageItem([ResponseContentPart.CreateInputTextPart(string.Empty)]));
         return items;
     }
+
+    private static string BuildToolCallingSystemPrompt(IEnumerable<LLMToolDefinition> tools, string toolChoice)
+    {
+        var toolsSpec = string.Join(
+            "\n",
+            tools.Select(t =>
+                $"- name: {t.Name}\n  description: {t.Description}\n  parametersJsonSchema: {t.ParametersJsonSchema}"));
+
+        var choiceRule = toolChoice switch
+        {
+            "required" => "You MUST call a tool before final answer.",
+            "none" => "You MUST NOT call tools. Return FINAL.",
+            _ => "Use tools only when they improve correctness."
+        };
+
+        return
+            "You are a tool-calling assistant.\n\n" +
+            $"Available tools:\n{toolsSpec}\n\n" +
+            "Policy:\n" +
+            $"- {choiceRule}\n" +
+            "- If you need a tool, return action TOOL_CALL with exact toolName and argumentsJson as a JSON string.\n" +
+            "- If you can answer, return action FINAL with finalAnswer.\n" +
+            "- Return only valid JSON.\n\n" +
+            "Output schema:\n" +
+            "{\n" +
+            "  \"action\": \"TOOL_CALL|FINAL\",\n" +
+            "  \"toolName\": \"optional tool name\",\n" +
+            "  \"argumentsJson\": \"optional JSON string\",\n" +
+            "  \"finalAnswer\": \"optional final text\"\n" +
+            "}";
+    }
+}
+
+internal sealed class ToolCallDecision
+{
+    [JsonPropertyName("action")]
+    public string? Action { get; set; }
+
+    [JsonPropertyName("toolName")]
+    public string? ToolName { get; set; }
+
+    [JsonPropertyName("argumentsJson")]
+    public string? ArgumentsJson { get; set; }
+
+    [JsonPropertyName("finalAnswer")]
+    public string? FinalAnswer { get; set; }
 }
 
 /// <summary>

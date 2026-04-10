@@ -203,7 +203,7 @@ public class SupervisorGraphTests
                     command.Resume = null;
                 }
 
-                var lastHuman = state.Messages.OfType<HumanMessage>().LastOrDefault();
+                var lastHuman = state.Messages.LastOrDefault() as HumanMessage;
                 if (lastHuman == null
                     || string.IsNullOrWhiteSpace(lastHuman.Content)
                     || string.Equals(lastHuman.Content, state.LastMenuHandledHumanMessage, StringComparison.Ordinal))
@@ -410,7 +410,7 @@ public class SupervisorGraphTests
                 state.Messages.Add(resumeHuman);
             }
 
-            var lastHuman = state.Messages.OfType<HumanMessage>().LastOrDefault();
+            var lastHuman = state.Messages.LastOrDefault() as HumanMessage;
             if (lastHuman == null
                 || string.IsNullOrWhiteSpace(lastHuman.Content)
                 || string.Equals(lastHuman.Content, state.LastMenuHandledHumanMessage, StringComparison.Ordinal))
