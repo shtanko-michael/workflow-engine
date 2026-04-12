@@ -29,11 +29,24 @@ public static class OnboardingWorkflow
             WithContextNode.Wrap<OnboardingState>(name, (s, c, e, cfg) => run(s, c, e, cfg, scopeFactory));
 
         var workflow = new WorkflowGraph<OnboardingState>()
+            .AddNode("initial", WithContextNode.Wrap<OnboardingState>("initial", (state, _, _, config) =>
+            {
+                if (config.Configurable.TryGetValue(WorkflowConfigKeys.WorkflowCommandKey, out var commandObj)
+                    && commandObj is WorkflowCommand<OnboardingState> command
+                    && command.Resume is HumanMessage resumeHuman)
+                {
+                    if (state.Messages.LastOrDefault() is not HumanMessage lastHuman || lastHuman.Id != resumeHuman.Id)
+                        state.Messages.Add(resumeHuman);
+                    command.Resume = null;
+                }
+
+                return Task.FromResult(WorkflowCommand<OnboardingState>.Create(gotoNode: "welcome", update: state));
+            }))
             .AddNode("welcome", Step("welcome", WelcomeStep.Execute))
             .AddNode("survey", Step("survey", SurveyStep.Execute))
             .AddNode("thankYou", Step("thankYou", ThankYouStep.Execute))
             .AddNode(WorkflowEdges.AskHuman, AskHumanNode.Create<OnboardingState>())
-            .AddEdge(WorkflowEdges.Start, "welcome");
+            .AddEdge(WorkflowEdges.Start, "initial");
 
         return new WorkflowDeclaration<OnboardingState>
         {

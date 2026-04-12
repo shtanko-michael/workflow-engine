@@ -448,43 +448,44 @@ internal static class JsonSchemaHelper
 {
     public static byte[] GetJsonSchemaForType<T>() where T : class
     {
-        var type = typeof(T);
+        var schema = BuildObjectSchema(typeof(T), new HashSet<Type>());
+        return JsonSerializer.SerializeToUtf8Bytes(schema);
+    }
+
+    private static Dictionary<string, object> BuildObjectSchema(Type type, HashSet<Type> visitedTypes)
+    {
         var properties = new Dictionary<string, object>();
         var required = new List<string>();
 
         foreach (var prop in type.GetProperties())
         {
-            // Get JsonPropertyName attribute if present, otherwise use property name
             var jsonNameAttr = prop.GetCustomAttributes(typeof(JsonPropertyNameAttribute), false)
                 .OfType<JsonPropertyNameAttribute>()
                 .FirstOrDefault();
             var jsonPropertyName = jsonNameAttr?.Name ?? prop.Name;
+            properties[jsonPropertyName] = GetPropertySchema(prop.PropertyType, visitedTypes);
 
-            var propSchema = GetPropertySchema(prop.PropertyType);
-            properties[jsonPropertyName] = propSchema;
-
-            // Add to required if property type is not nullable
+            // Keep the same behavior: only non-nullable value types are required.
             var underlyingType = Nullable.GetUnderlyingType(prop.PropertyType);
             if (underlyingType == null && prop.PropertyType.IsValueType)
-            {
                 required.Add(jsonPropertyName);
-            }
         }
 
-        var schema = new Dictionary<string, object>
+        return new Dictionary<string, object>
         {
             ["type"] = "object",
             ["properties"] = properties,
             ["required"] = required.ToArray(),
             ["additionalProperties"] = false
         };
-
-        return JsonSerializer.SerializeToUtf8Bytes(schema);
     }
 
-    private static Dictionary<string, object> GetPropertySchema(Type propertyType)
+    private static Dictionary<string, object> GetPropertySchema(Type propertyType, HashSet<Type> visitedTypes)
     {
         var underlyingType = Nullable.GetUnderlyingType(propertyType) ?? propertyType;
+
+        if (underlyingType.IsEnum)
+            return new Dictionary<string, object> { ["type"] = "string" };
 
         if (underlyingType == typeof(string))
             return new Dictionary<string, object> { ["type"] = "string" };
@@ -504,11 +505,29 @@ internal static class JsonSchemaHelper
             return new Dictionary<string, object>
             {
                 ["type"] = "array",
-                ["items"] = GetPropertySchema(elementType)
+                ["items"] = GetPropertySchema(elementType, visitedTypes)
             };
         }
 
-        // Default to string for unknown types
+        if (underlyingType.IsClass)
+        {
+            if (visitedTypes.Contains(underlyingType))
+            {
+                // Prevent recursion loops for self-referencing types.
+                return new Dictionary<string, object>
+                {
+                    ["type"] = "object",
+                    ["additionalProperties"] = true
+                };
+            }
+
+            visitedTypes.Add(underlyingType);
+            var objectSchema = BuildObjectSchema(underlyingType, visitedTypes);
+            visitedTypes.Remove(underlyingType);
+            return objectSchema;
+        }
+
+        // Default fallback for unknown structs/value types.
         return new Dictionary<string, object> { ["type"] = "string" };
     }
 }

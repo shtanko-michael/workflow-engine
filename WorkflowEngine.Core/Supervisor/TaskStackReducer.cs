@@ -15,24 +15,17 @@ public static class TaskStackReducer
         ArgumentNullException.ThrowIfNull(decision);
         options ??= new TaskStackReducerOptions();
 
-        return decision.IntentType switch
-        {
-            SupervisorIntentType.ContinueCurrent => ContinueCurrent(state, options),
-            SupervisorIntentType.StartNew => StartNew(state, decision.TaskType, options),
-            SupervisorIntentType.SwitchTo => SwitchTo(state, decision.TaskType, options),
-            SupervisorIntentType.CancelCurrent => CancelCurrent(state, options),
-            SupervisorIntentType.CancelAll => CancelAll(state, options),
-            SupervisorIntentType.ResumeTask => ResumeTask(state, decision.TaskId, options),
-            _ => ContinueCurrent(state, options),
-        };
+        EnqueueIntents(state, ToIntentItems(decision));
+        return state;
     }
 
     public static TState ContinueCurrent<TState>(TState state, TaskStackReducerOptions? options = null)
         where TState : ISupervisorState
     {
         options ??= new TaskStackReducerOptions();
+        CleanupQueue(state);
         EnsureNotEmpty(state, options);
-        Normalize(state);
+        NormalizeFromQueue(state, options.MenuTaskType);
         return state;
     }
 
@@ -41,16 +34,7 @@ public static class TaskStackReducer
     {
         if (string.IsNullOrWhiteSpace(taskType))
             throw new ArgumentException("Task type cannot be null or empty.", nameof(taskType));
-
-        options ??= new TaskStackReducerOptions();
-        SuspendTop(state);
-        var instance = CreateTask(taskType, options);
-        instance.Status = TaskStatus.Active;
-        Touch(instance);
-        state.TaskStack.Add(instance);
-        state.CurrentTaskId = instance.TaskId;
-        Normalize(state);
-        return state;
+        return StartNew(state, taskType, sourceUserMessageId: null, options);
     }
 
     public static TState SwitchTo<TState>(TState state, string? taskType, TaskStackReducerOptions? options = null)
@@ -60,29 +44,27 @@ public static class TaskStackReducer
             throw new ArgumentException("Task type cannot be null or empty.", nameof(taskType));
 
         options ??= new TaskStackReducerOptions();
-        var stack = state.TaskStack;
-        var top = GetTop(state);
-        if (top != null && string.Equals(top.TaskType, taskType, StringComparison.OrdinalIgnoreCase))
+        CleanupQueue(state);
+        var current = GetCurrentTask(state);
+        if (current != null && string.Equals(current.TaskType, taskType, StringComparison.OrdinalIgnoreCase))
         {
             EnsureNotEmpty(state, options);
-            Normalize(state);
+            NormalizeFromQueue(state, options.MenuTaskType);
             return state;
         }
 
-        SuspendTop(state);
+        SuspendCurrent(state);
 
-        var existingIndex = stack.FindLastIndex(x =>
+        var existingIndex = state.TaskStack.FindLastIndex(x =>
             x.Status is not (TaskStatus.Cancelled or TaskStatus.Completed) &&
             string.Equals(x.TaskType, taskType, StringComparison.OrdinalIgnoreCase));
         if (existingIndex >= 0)
         {
-            var existing = stack[existingIndex];
-            stack.RemoveAt(existingIndex);
+            var existing = state.TaskStack[existingIndex];
             existing.Status = TaskStatus.Active;
             Touch(existing);
-            stack.Add(existing);
-            state.CurrentTaskId = existing.TaskId;
-            Normalize(state);
+            MoveTaskToQueueFront(state, existing, existing.SourceUserMessageId);
+            NormalizeFromQueue(state, options.MenuTaskType);
             return state;
         }
 
@@ -93,16 +75,17 @@ public static class TaskStackReducer
         where TState : ISupervisorState
     {
         options ??= new TaskStackReducerOptions();
-        var top = GetTop(state);
-        if (top != null)
+        CleanupQueue(state);
+        var current = GetCurrentTask(state);
+        if (current != null)
         {
-            top.Status = TaskStatus.Cancelled;
-            Touch(top);
-            state.TaskStack.RemoveAt(state.TaskStack.Count - 1);
+            current.Status = TaskStatus.Cancelled;
+            Touch(current);
+            RemoveTaskFromQueue(state, current.TaskId);
         }
 
         EnsureNotEmpty(state, options);
-        Normalize(state);
+        NormalizeFromQueue(state, options.MenuTaskType);
         return state;
     }
 
@@ -115,10 +98,11 @@ public static class TaskStackReducer
             task.Status = TaskStatus.Cancelled;
             Touch(task);
         }
+        state.TaskQueue.Clear();
         state.TaskStack.Clear();
         state.CurrentTaskId = null;
         EnsureNotEmpty(state, options);
-        Normalize(state);
+        NormalizeFromQueue(state, options.MenuTaskType);
         return state;
     }
 
@@ -129,31 +113,45 @@ public static class TaskStackReducer
             throw new ArgumentException("Task id cannot be null or empty.", nameof(taskId));
 
         options ??= new TaskStackReducerOptions();
-        var stack = state.TaskStack;
-        var existingIndex = stack.FindIndex(x =>
+        CleanupQueue(state);
+        var existingIndex = state.TaskStack.FindIndex(x =>
             string.Equals(x.TaskId, taskId, StringComparison.Ordinal) &&
             x.Status is TaskStatus.Active or TaskStatus.Suspended);
         if (existingIndex < 0)
         {
             EnsureNotEmpty(state, options);
-            Normalize(state);
+            NormalizeFromQueue(state, options.MenuTaskType);
             return state;
         }
 
-        SuspendTop(state);
-        var existing = stack[existingIndex];
-        stack.RemoveAt(existingIndex);
+        SuspendCurrent(state);
+        var existing = state.TaskStack[existingIndex];
         existing.Status = TaskStatus.Active;
         Touch(existing);
-        stack.Add(existing);
-        state.CurrentTaskId = existing.TaskId;
-        Normalize(state);
+        MoveTaskToQueueFront(state, existing, existing.SourceUserMessageId);
+        NormalizeFromQueue(state, options.MenuTaskType);
         return state;
     }
 
     public static TaskInstance? GetCurrentTask<TState>(TState state) where TState : ISupervisorState
     {
         ArgumentNullException.ThrowIfNull(state);
+        if (state.TaskQueue.Count > 0)
+        {
+            var nextQueue = state.TaskQueue
+                .FirstOrDefault(x => state.TaskStack.Any(t =>
+                    string.Equals(t.TaskId, x.TaskId, StringComparison.Ordinal) &&
+                    t.Status is TaskStatus.Active or TaskStatus.Suspended));
+            if (nextQueue != null)
+            {
+                var fromQueue = state.TaskStack.FindLast(x =>
+                    string.Equals(x.TaskId, nextQueue.TaskId, StringComparison.Ordinal) &&
+                    x.Status is TaskStatus.Active or TaskStatus.Suspended);
+                if (fromQueue != null)
+                    return fromQueue;
+            }
+        }
+
         if (!string.IsNullOrWhiteSpace(state.CurrentTaskId))
         {
             var byCurrentId = state.TaskStack.FindLast(x =>
@@ -166,60 +164,314 @@ public static class TaskStackReducer
         return state.TaskStack.FindLast(x => x.Status == TaskStatus.Active);
     }
 
+    public static TaskQueueItem? GetCurrentQueueItem<TState>(TState state) where TState : ISupervisorState
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        CleanupQueue(state);
+        return state.TaskQueue.FirstOrDefault();
+    }
+
+    public static TState FailCurrentAndClearQueue<TState>(TState state, string? reason = null) where TState : ISupervisorState
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        CleanupQueue(state);
+
+        var now = DateTimeOffset.UtcNow;
+        foreach (var queueItem in state.TaskQueue)
+        {
+            var task = state.TaskStack.FindLast(x => string.Equals(x.TaskId, queueItem.TaskId, StringComparison.Ordinal));
+            if (task == null || task.Status is TaskStatus.Completed or TaskStatus.Cancelled)
+                continue;
+            task.Status = TaskStatus.Cancelled;
+            task.UpdatedAt = now;
+        }
+
+        state.TaskQueue.Clear();
+        state.CurrentTaskId = null;
+
+        if (!string.IsNullOrWhiteSpace(reason))
+            state.History.Add($"queue-fail-fast:{reason}");
+
+        state.PendingIntentQueue.Clear();
+        NormalizeFromQueue(state, menuTaskType: "menu");
+        return state;
+    }
+
+    public static bool SuspendInterruptedAndTryMoveNext<TState>(
+        TState state,
+        string menuTaskType = "menu")
+        where TState : ISupervisorState
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        CleanupQueue(state);
+
+        var current = GetCurrentTask(state);
+        if (current == null)
+            return false;
+
+        var currentQueueIndex = state.TaskQueue.FindIndex(x => string.Equals(x.TaskId, current.TaskId, StringComparison.Ordinal));
+        if (currentQueueIndex < 0)
+            return false;
+
+        var hasAnotherRunnable = state.TaskQueue.Any(x => !string.Equals(x.TaskId, current.TaskId, StringComparison.Ordinal));
+        if (!hasAnotherRunnable)
+            return false;
+
+        if (current.Status == TaskStatus.Active)
+        {
+            current.Status = TaskStatus.Suspended;
+            Touch(current);
+        }
+
+        var interruptedItem = state.TaskQueue[currentQueueIndex];
+        state.TaskQueue.RemoveAt(currentQueueIndex);
+        interruptedItem.EnqueuedAt = DateTimeOffset.UtcNow;
+        state.TaskQueue.Add(interruptedItem);
+
+        NormalizeFromQueue(state, menuTaskType);
+        var next = GetCurrentTask(state);
+        return next != null && !string.Equals(next.TaskId, current.TaskId, StringComparison.Ordinal);
+    }
+
+    public static void EnqueueIntents<TState>(TState state, IEnumerable<SupervisorIntentItem> items)
+        where TState : ISupervisorState
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        var prepared = (items ?? [])
+            .Where(x => x != null)
+            .Select(x =>
+            {
+                x.EnqueuedAt = DateTimeOffset.UtcNow;
+                return x;
+            })
+            .ToArray();
+        if (prepared.Length == 0)
+            return;
+        state.PendingIntentQueue.AddRange(prepared);
+    }
+
+    public static bool HasPendingIntents<TState>(TState state) where TState : ISupervisorState =>
+        state.PendingIntentQueue.Count > 0;
+
+    public static TState DrainNextIntent<TState>(TState state, TaskStackReducerOptions? options = null)
+        where TState : ISupervisorState
+    {
+        options ??= new TaskStackReducerOptions();
+        if (!TryDequeueNextIntent(state, out var nextIntent))
+            return ContinueCurrent(state, options);
+
+        return ApplySingleIntent(state, nextIntent, options);
+    }
+
+    public static bool TryDequeueNextIntent<TState>(TState state, out SupervisorIntentItem intentItem)
+        where TState : ISupervisorState
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        if (state.PendingIntentQueue.Count == 0)
+        {
+            intentItem = new SupervisorIntentItem { IntentType = SupervisorIntentType.ContinueCurrent };
+            return false;
+        }
+
+        intentItem = state.PendingIntentQueue[0];
+        state.PendingIntentQueue.RemoveAt(0);
+        return true;
+    }
+
+    public static TState ApplySingleIntent<TState>(TState state, SupervisorIntentItem intentItem, TaskStackReducerOptions? options = null)
+        where TState : ISupervisorState
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        ArgumentNullException.ThrowIfNull(intentItem);
+        options ??= new TaskStackReducerOptions();
+
+        return intentItem.IntentType switch
+        {
+            SupervisorIntentType.ContinueCurrent => ContinueCurrent(state, options),
+            SupervisorIntentType.StartNew => StartNew(state, intentItem.TaskType, intentItem.SourceUserMessageId, options),
+            SupervisorIntentType.SwitchTo => SwitchTo(state, intentItem.TaskType, options),
+            SupervisorIntentType.CancelCurrent => CancelCurrent(state, options),
+            SupervisorIntentType.CancelAll => CancelAll(state, options),
+            SupervisorIntentType.ResumeTask => ResumeTask(state, intentItem.TaskId, options),
+            _ => ContinueCurrent(state, options),
+        };
+    }
+
     private static void EnsureNotEmpty<TState>(TState state, TaskStackReducerOptions options) where TState : ISupervisorState
     {
         ArgumentNullException.ThrowIfNull(state);
-        if (state.TaskStack.Count > 0)
+        if (state.TaskQueue.Count > 0)
             return;
 
-        var menuTask = CreateTask(options.MenuTaskType, options);
+        var menuTask = state.TaskStack.FindLast(x =>
+            string.Equals(x.TaskType, options.MenuTaskType, StringComparison.OrdinalIgnoreCase) &&
+            x.Status is not (TaskStatus.Cancelled or TaskStatus.Completed));
+        if (menuTask == null)
+        {
+            menuTask = CreateTask(options.MenuTaskType, options);
+            state.TaskStack.Add(menuTask);
+        }
+
         menuTask.Status = TaskStatus.Active;
         Touch(menuTask);
-        state.TaskStack.Add(menuTask);
         state.CurrentTaskId = menuTask.TaskId;
     }
 
-    private static void SuspendTop<TState>(TState state) where TState : ISupervisorState
+    private static void SuspendCurrent<TState>(TState state) where TState : ISupervisorState
     {
-        var top = GetTop(state);
-        if (top != null && top.Status == TaskStatus.Active)
+        var current = GetCurrentTask(state);
+        if (current != null && current.Status == TaskStatus.Active)
         {
-            top.Status = TaskStatus.Suspended;
-            Touch(top);
+            current.Status = TaskStatus.Suspended;
+            Touch(current);
         }
     }
 
-    private static void Normalize<TState>(TState state) where TState : ISupervisorState
+    private static void CleanupQueue<TState>(TState state) where TState : ISupervisorState
     {
+        if (state.TaskQueue.Count == 0)
+            return;
+
+        var aliveIds = state.TaskStack
+            .Where(x => x.Status is not (TaskStatus.Cancelled or TaskStatus.Completed))
+            .Select(x => x.TaskId)
+            .ToHashSet(StringComparer.Ordinal);
+
+        state.TaskQueue = state.TaskQueue
+            .Where(x => !string.IsNullOrWhiteSpace(x.TaskId) && aliveIds.Contains(x.TaskId))
+            .GroupBy(x => x.TaskId, StringComparer.Ordinal)
+            .Select(g => g.First())
+            .ToList();
+    }
+
+    private static void NormalizeFromQueue<TState>(TState state, string menuTaskType) where TState : ISupervisorState
+    {
+        CleanupQueue(state);
         if (state.TaskStack.Count == 0)
         {
             state.CurrentTaskId = null;
             return;
         }
 
-        for (var i = 0; i < state.TaskStack.Count - 1; i++)
+        var currentQueue = state.TaskQueue.FirstOrDefault();
+        if (currentQueue == null)
         {
-            if (state.TaskStack[i].Status == TaskStatus.Active)
+            var fallbackCurrent = state.TaskStack.FindLast(x =>
+                x.Status is not (TaskStatus.Cancelled or TaskStatus.Completed) &&
+                string.Equals(x.TaskType, menuTaskType, StringComparison.OrdinalIgnoreCase));
+            if (fallbackCurrent != null)
             {
-                state.TaskStack[i].Status = TaskStatus.Suspended;
-                Touch(state.TaskStack[i]);
+                fallbackCurrent.Status = TaskStatus.Active;
+                Touch(fallbackCurrent);
+                state.CurrentTaskId = fallbackCurrent.TaskId;
             }
-        }
+            else
+            {
+                state.CurrentTaskId = null;
+            }
 
-        var top = state.TaskStack[^1];
-        if (top.Status is not (TaskStatus.Cancelled or TaskStatus.Completed))
-        {
-            top.Status = TaskStatus.Active;
-            Touch(top);
-            state.CurrentTaskId = top.TaskId;
+            foreach (var task in state.TaskStack)
+            {
+                if (task.Status == TaskStatus.Active && !string.Equals(task.TaskId, state.CurrentTaskId, StringComparison.Ordinal))
+                {
+                    task.Status = TaskStatus.Suspended;
+                    Touch(task);
+                }
+            }
             return;
         }
 
-        state.CurrentTaskId = null;
+        var currentTask = state.TaskStack.FindLast(x =>
+            string.Equals(x.TaskId, currentQueue.TaskId, StringComparison.Ordinal) &&
+            x.Status is not (TaskStatus.Cancelled or TaskStatus.Completed));
+        if (currentTask == null)
+        {
+            state.TaskQueue.RemoveAt(0);
+            NormalizeFromQueue(state, menuTaskType);
+            return;
+        }
+
+        currentTask.Status = TaskStatus.Active;
+        currentTask.SourceUserMessageId ??= currentQueue.SourceUserMessageId;
+        Touch(currentTask);
+        state.CurrentTaskId = currentTask.TaskId;
+
+        foreach (var task in state.TaskStack)
+        {
+            if (string.Equals(task.TaskId, currentTask.TaskId, StringComparison.Ordinal))
+                continue;
+            if (task.Status is TaskStatus.Active)
+            {
+                task.Status = TaskStatus.Suspended;
+                Touch(task);
+            }
+        }
     }
 
-    private static TaskInstance? GetTop<TState>(TState state) where TState : ISupervisorState =>
-        state.TaskStack.Count == 0 ? null : state.TaskStack[^1];
+    private static void MoveTaskToQueueFront<TState>(TState state, TaskInstance task, string? sourceUserMessageId)
+        where TState : ISupervisorState
+    {
+        state.TaskQueue.RemoveAll(x => string.Equals(x.TaskId, task.TaskId, StringComparison.Ordinal));
+        state.TaskQueue.Insert(0, new TaskQueueItem
+        {
+            TaskId = task.TaskId,
+            TaskType = task.TaskType,
+            SourceUserMessageId = sourceUserMessageId,
+            EnqueuedAt = DateTimeOffset.UtcNow,
+        });
+    }
+
+    private static void RemoveTaskFromQueue<TState>(TState state, string taskId) where TState : ISupervisorState =>
+        state.TaskQueue.RemoveAll(x => string.Equals(x.TaskId, taskId, StringComparison.Ordinal));
+
+    private static IEnumerable<SupervisorIntentItem> ToIntentItems(SupervisorDecision decision)
+    {
+        if (decision.IntentItems.Count > 0)
+            return decision.IntentItems;
+
+        return
+        [
+            new SupervisorIntentItem
+            {
+                IntentType = decision.IntentType,
+                TaskType = decision.TaskType,
+                TaskId = decision.TaskId,
+                SourceUserMessageId = decision.SourceUserMessageId,
+                Reason = decision.Reason,
+            }
+        ];
+    }
+
+    private static TState StartNew<TState>(
+        TState state,
+        string? taskType,
+        string? sourceUserMessageId,
+        TaskStackReducerOptions? options = null)
+        where TState : ISupervisorState
+    {
+        if (string.IsNullOrWhiteSpace(taskType))
+            throw new ArgumentException("Task type cannot be null or empty.", nameof(taskType));
+
+        options ??= new TaskStackReducerOptions();
+        SuspendCurrent(state);
+
+        var instance = CreateTask(taskType, options);
+        instance.SourceUserMessageId = sourceUserMessageId;
+        instance.Status = TaskStatus.Suspended;
+        Touch(instance);
+        state.TaskStack.Add(instance);
+        state.TaskQueue.Insert(0, new TaskQueueItem
+        {
+            TaskId = instance.TaskId,
+            TaskType = instance.TaskType,
+            SourceUserMessageId = sourceUserMessageId,
+            EnqueuedAt = DateTimeOffset.UtcNow,
+        });
+
+        CleanupQueue(state);
+        NormalizeFromQueue(state, options.MenuTaskType);
+        return state;
+    }
 
     private static TaskInstance CreateTask(string taskType, TaskStackReducerOptions options)
     {

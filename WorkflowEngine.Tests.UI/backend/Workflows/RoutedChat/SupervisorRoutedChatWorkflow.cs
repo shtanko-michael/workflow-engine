@@ -2,6 +2,10 @@ using WorkflowEngine.Core.Graph;
 using WorkflowEngine.Core.Persistence;
 using WorkflowEngine.Core.Registry;
 using WorkflowEngine.Core.Supervisor;
+using WorkflowEngine.Core.Commands;
+using WorkflowEngine.Core.Execution;
+using WorkflowEngine.Core.Nodes;
+using WorkflowEngine.Core.State;
 using WorkflowEngine.Tests.UI.Backend.Workflows.Onboarding;
 using WorkflowEngine.Tests.UI.Backend.Workflows.RoutedChat.Weather;
 using WorkflowEngine.Tests.UI.Backend.Workflows.RoutedChat.Support;
@@ -15,11 +19,27 @@ public static class SupervisorRoutedChatWorkflow
 {
     public static WorkflowDeclaration<SupervisorRoutedChatState> Build(IServiceScopeFactory scopeFactory)
     {
+        static WorkflowNode<TState> InitialNode<TState>(string nextNode) where TState : WorkflowStateBase =>
+            WithContextNode.Wrap<TState>("initial", (state, _, _, config) =>
+            {
+                if (config.Configurable.TryGetValue(WorkflowConfigKeys.WorkflowCommandKey, out var commandObj)
+                    && commandObj is WorkflowCommand<TState> command
+                    && command.Resume is HumanMessage resumeHuman)
+                {
+                    if (state.Messages.LastOrDefault() is not HumanMessage lastHuman || lastHuman.Id != resumeHuman.Id)
+                        state.Messages.Add(resumeHuman);
+                    command.Resume = null;
+                }
+
+                return Task.FromResult(WorkflowCommand<TState>.Create(gotoNode: nextNode, update: state));
+            });
+
         var weatherGraph = new WorkflowGraph<WeatherSubState>()
             .AddNode(WorkflowEdges.AskHuman, WorkflowEngine.Core.Nodes.AskHumanNode.Create<WeatherSubState>())
+            .AddNode("initial", InitialNode<WeatherSubState>("askCity"))
             .AddNode("askCity", AskCityNode.Create())
             .AddNode("forecast", ForecastNode.Create(scopeFactory))
-            .AddEdge(WorkflowEdges.Start, "askCity");
+            .AddEdge(WorkflowEdges.Start, "initial");
 
         var scope = scopeFactory.CreateScope();
         var checkpointerFactory = scope.ServiceProvider.GetRequiredService<ICheckpointSaverFactory>();
@@ -28,8 +48,9 @@ public static class SupervisorRoutedChatWorkflow
         var onboardingDeclaration = OnboardingWorkflow.Build(scopeFactory);
         var compiledOnboarding = onboardingDeclaration.Workflow.Compile(checkpointerFactory);
         var taskSupportGraph = new WorkflowGraph<TaskSupportState>()
+            .AddNode("initial", InitialNode<TaskSupportState>("answer"))
             .AddNode("answer", TaskSupportAnswerNode.Create(scopeFactory))
-            .AddEdge(WorkflowEdges.Start, "answer");
+            .AddEdge(WorkflowEdges.Start, "initial");
         var compiledTaskSupport = taskSupportGraph.Compile(checkpointerFactory);
 
         var workflow = new SupervisorGraph<SupervisorRoutedChatState>()
@@ -38,8 +59,11 @@ public static class SupervisorRoutedChatWorkflow
                 SupervisorTaskMenuNode.Create(scopeFactory))
             .SetIntentResolver((state, _, _) =>
             {
-                var decision = state.MenuDecision ?? SupervisorDecision.Continue("menu-default");
-                state.MenuDecision = null;
+                var queuedIntents = state.MenuIntents.ToArray();
+                state.MenuIntents.Clear();
+                var decision = queuedIntents.Length > 0
+                    ? SupervisorDecision.Batch(queuedIntents, "menu-intents")
+                    : SupervisorDecision.Continue("menu-default");
                 return Task.FromResult(decision);
             })
             .RegisterTask(
@@ -47,7 +71,7 @@ public static class SupervisorRoutedChatWorkflow
                 compiledWeather,
                 initialStateMapping: (parent, _) => new WeatherSubState
                 {
-                    Messages = parent.Messages.Count > 0 ? [parent.Messages.Last()] : [],
+                    // Messages = parent.Messages.Count > 0 ? [parent.Messages.Last()] : [],
                 },
                 completeStateMapping: (parent, sub, _) =>
                 {
@@ -64,7 +88,7 @@ public static class SupervisorRoutedChatWorkflow
                 compiledOnboarding,
                 initialStateMapping: (parent, _) => new OnboardingState
                 {
-                    Messages = parent.Messages.Count > 0 ? [parent.Messages.Last()] : [],
+                    // Messages = parent.Messages.Count > 0 ? [parent.Messages.Last()] : [],
                 },
                 completeStateMapping: (parent, sub, _) =>
                 {
@@ -82,7 +106,7 @@ public static class SupervisorRoutedChatWorkflow
                 compiledTaskSupport,
                 initialStateMapping: (parent, _) => new TaskSupportState
                 {
-                    Messages = parent.Messages.Count > 0 ? [parent.Messages.Last()] : [],
+                    // Messages = parent.Messages.Count > 0 ? [parent.Messages.Last()] : [],
                     TaskStackSnapshot = parent.TaskStack
                         .Select(x => new TaskSnapshotItem
                         {

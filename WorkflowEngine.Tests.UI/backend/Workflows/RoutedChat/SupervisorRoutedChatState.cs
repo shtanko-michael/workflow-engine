@@ -9,5 +9,5 @@ public class SupervisorRoutedChatState : SupervisorStateBase
 {
     public string[] RequestedForecastCities { get; set; } = [];
     public string[] SurveyResults { get; set; } = [];
-    public SupervisorDecision? MenuDecision { get; set; }
+    public List<SupervisorIntentItem> MenuIntents { get; set; } = [];
 }

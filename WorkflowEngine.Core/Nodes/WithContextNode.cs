@@ -65,8 +65,7 @@ public static class WithContextNode
                 // Re-throw interrupt exceptions
                 throw;
             }
-            catch (Exception ex)
-            {
+            catch (Exception ex) {
                 context.Logger.LogError(ex, "Error in node {NodeName}", name);
                 return errorHandler(ex);
             }

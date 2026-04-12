@@ -26,17 +26,33 @@ public static class TaskAsNode {
             var parentCommand = parentConfig.Configurable.TryGetValue(WorkflowConfigKeys.WorkflowCommandKey, out var cmdObj)
                 ? cmdObj as WorkflowCommand<TSupervisorState>
                 : null;
+            var resumeHuman = ResolveResumeHuman(state, activeTask, parentCommand);
             var childStateUpdate = string.IsNullOrEmpty(activeTask.CheckpointId) ? Activator.CreateInstance<TSupervisorState>() : null;
-            if (childStateUpdate != null && state.Messages.Count > 0)
-                childStateUpdate.Messages.Add(state.Messages.LastOrDefault());
+            if (childStateUpdate != null)
+            {
+                if (resumeHuman != null)
+                    childStateUpdate.Messages.Add(resumeHuman);
+                else if (state.Messages.LastOrDefault() is { } lastMessage)
+                    childStateUpdate.Messages.Add(lastMessage);
+            }
             var commandToChild = WorkflowCommand<TSupervisorState>.Create(
                 update: childStateUpdate,
-                resume: !string.IsNullOrEmpty(activeTask.CheckpointId) ? (state.Messages.LastOrDefault() is HumanMessage ? state.Messages.LastOrDefault() : true) : null);
+                resume: (object?)resumeHuman ?? true);
             parentConfig.Configurable.Remove(WorkflowConfigKeys.WorkflowCommandKey);
 
-            await SafeNotifyTaskAsync(parentConfig, state, (i, c, s) => i.OnSubgraphStartedAsync(nodeName, c, s));
-            var childState = await taskGraph.InvokeAsync(commandToChild, childConfig);
-            await SafeNotifyTaskAsync(parentConfig, state, (i, c, s) => i.OnSubgraphCompletedAsync(nodeName, c, s));
+            TSupervisorState childState;
+            try {
+                await SafeNotifyTaskAsync(parentConfig, state, (i, c, s) => i.OnSubgraphStartedAsync(nodeName, c, s));
+                childState = await taskGraph.InvokeAsync(commandToChild, childConfig);
+                await SafeNotifyTaskAsync(parentConfig, state, (i, c, s) => i.OnSubgraphCompletedAsync(nodeName, c, s));
+            } catch (TaskWorkflowInterruptException) {
+                throw;
+            } catch (SubgraphWorkflowInterruptException) {
+                throw;
+            } catch (Exception ex) {
+                TaskStackReducer.FailCurrentAndClearQueue(state, $"task-error:{taskType}:{ex.Message}");
+                throw;
+            }
 
             SyncTaskCheckpoint(activeTask, childConfig, childState);
 
@@ -53,8 +69,10 @@ public static class TaskAsNode {
                 // Keep parent state in sync with resumed child snapshot before interrupting supervisor.
                 // SyncStateSnapshot(childState, state);
                 var requestId = childState.InterruptRequestId ?? childState.InterruptCaller ?? nodeName;
-                // Resume supervisor from menu first so it can decide whether to continue/switch/cancel current task.
-                throw new TaskWorkflowInterruptException(requestId, SupervisorNodeNames.Menu);
+                var canContinueQueue = TaskStackReducer.SuspendInterruptedAndTryMoveNext(state)
+                    || TaskStackReducer.HasPendingIntents(state);
+                var caller = canContinueQueue ? SupervisorNodeNames.QueueNext : SupervisorNodeNames.Menu;
+                throw new TaskWorkflowInterruptException(requestId, caller, continueExecution: canContinueQueue);
             }
 
             return SubGraphWorkflowCommand<TSupervisorState, TSupervisorState>.Create(childState, update: childState);
@@ -80,11 +98,11 @@ public static class TaskAsNode {
             var parentCommand = parentConfig.Configurable.TryGetValue(WorkflowConfigKeys.WorkflowCommandKey, out var cmdObj)
                 ? cmdObj as WorkflowCommand<TSupervisorState>
                 : null;
-            // resume with last human message if parent command is not resume
-            var resume = parentCommand?.Resume ?? state.Messages.LastOrDefault() as HumanMessage; ;
+            // Resolve resume by explicit command first, then by source user message id.
+            var resume = ResolveResumeHuman(state, activeTask, parentCommand);
             var commandToChild = WorkflowCommand<TTaskState>.Create(
                 update: string.IsNullOrEmpty(activeTask.CheckpointId) ? initialStateMapping(state, activeTask) : null,
-                resume: string.IsNullOrEmpty(activeTask.CheckpointId) ? null : resume);
+                resume: resume);
             parentConfig.Configurable.Remove(WorkflowConfigKeys.WorkflowCommandKey);
 
             try {
@@ -111,14 +129,21 @@ public static class TaskAsNode {
                     parentConfig.SubgraphCheckpointId = activeTask.CheckpointId;
                     parentConfig.SubgraphCheckpointNs = activeTask.CheckpointNs;
                     var requestId = childState.InterruptRequestId ?? childState.InterruptCaller ?? nodeName;
-                    // Resume supervisor from menu first so it can decide whether to continue/switch/cancel current task.
-                    throw new SubgraphWorkflowInterruptException(requestId, SupervisorNodeNames.Menu);
+                    var canContinueQueue = TaskStackReducer.SuspendInterruptedAndTryMoveNext(state)
+                        || TaskStackReducer.HasPendingIntents(state);
+                    var caller = canContinueQueue ? SupervisorNodeNames.QueueNext : SupervisorNodeNames.Menu;
+                    throw new TaskWorkflowInterruptException(requestId, caller, continueExecution: canContinueQueue);
                 }
 
                 var progressUpdate = completeStateMapping(state, childState, activeTask);
                 return SubGraphWorkflowCommand<TTaskState, TSupervisorState>.Create(childState, update: progressUpdate);
             } catch (SubgraphWorkflowInterruptException ex) {
                 throw new TaskWorkflowInterruptException(ex.RequestId, ex.Caller);
+            } catch (TaskWorkflowInterruptException) {
+                throw;
+            } catch (Exception ex) {
+                TaskStackReducer.FailCurrentAndClearQueue(state, $"task-error:{taskType}:{ex.Message}");
+                throw;
             }
         };
     }
@@ -191,6 +216,37 @@ public static class TaskAsNode {
                 taskInChild.UpdatedAt = activeTask.UpdatedAt;
             }
         }
+    }
+
+    private static HumanMessage? ResolveResumeHuman<TSupervisorState>(
+        TSupervisorState state,
+        TaskInstance activeTask,
+        WorkflowCommand<TSupervisorState>? parentCommand)
+        where TSupervisorState : WorkflowStateBase, ISupervisorState
+    {
+        if (parentCommand?.Resume is HumanMessage explicitResume)
+            return explicitResume;
+
+        if (!string.IsNullOrWhiteSpace(activeTask.SourceUserMessageId))
+        {
+            var byId = state.Messages
+                .OfType<HumanMessage>()
+                .LastOrDefault(x => string.Equals(x.Id, activeTask.SourceUserMessageId, StringComparison.Ordinal));
+            if (byId != null)
+                return byId;
+        }
+
+        var queueItem = TaskStackReducer.GetCurrentQueueItem(state);
+        if (!string.IsNullOrWhiteSpace(queueItem?.SourceUserMessageId))
+        {
+            var byQueueId = state.Messages
+                .OfType<HumanMessage>()
+                .LastOrDefault(x => string.Equals(x.Id, queueItem.SourceUserMessageId, StringComparison.Ordinal));
+            if (byQueueId != null)
+                return byQueueId;
+        }
+
+        return state.Messages.LastOrDefault() as HumanMessage;
     }
 
     private static async Task SafeNotifyTaskAsync<TState>(

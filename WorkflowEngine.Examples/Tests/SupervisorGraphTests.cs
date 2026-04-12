@@ -32,6 +32,11 @@ public class SupervisorGraphTests
         public string? LastMenuHandledHumanMessage { get; set; }
     }
 
+    private sealed class EchoTaskState : WorkflowStateBase
+    {
+        public string? SeenHuman { get; set; }
+    }
+
     private static WorkflowRunnableConfig BaseConfig(string threadId, string? checkpointId = null, bool skipSupervisorInternalCheckpoints = false)
     {
         var config = new WorkflowRunnableConfig
@@ -55,28 +60,29 @@ public class SupervisorGraphTests
 
         TaskStackReducer.StartNew(state, "create_site");
         Assert.Single(state.TaskStack);
-        Assert.Equal("create_site", state.TaskStack[^1].TaskType);
-        Assert.Equal(SupervisorTaskStatus.Active, state.TaskStack[^1].Status);
+        Assert.Equal("create_site", TaskStackReducer.GetCurrentTask(state)?.TaskType);
+        Assert.Equal(SupervisorTaskStatus.Active, TaskStackReducer.GetCurrentTask(state)?.Status);
+        Assert.Single(state.TaskQueue);
 
         TaskStackReducer.StartNew(state, "export_contacts");
         Assert.Equal(2, state.TaskStack.Count);
-        Assert.Equal(SupervisorTaskStatus.Suspended, state.TaskStack[0].Status);
-        Assert.Equal("export_contacts", state.TaskStack[^1].TaskType);
+        Assert.Equal("export_contacts", TaskStackReducer.GetCurrentTask(state)?.TaskType);
+        Assert.Equal("export_contacts", state.TaskQueue[0].TaskType);
+        Assert.Equal("create_site", state.TaskQueue[1].TaskType);
         var firstTaskId = state.TaskStack[0].TaskId;
 
         TaskStackReducer.SwitchTo(state, "create_site");
-        Assert.Equal("create_site", state.TaskStack[^1].TaskType);
-        Assert.Equal(SupervisorTaskStatus.Active, state.TaskStack[^1].Status);
-        Assert.Equal(SupervisorTaskStatus.Suspended, state.TaskStack[0].Status);
+        Assert.Equal("create_site", TaskStackReducer.GetCurrentTask(state)?.TaskType);
+        Assert.Equal(SupervisorTaskStatus.Active, TaskStackReducer.GetCurrentTask(state)?.Status);
+        Assert.Equal("create_site", state.TaskQueue[0].TaskType);
 
         TaskStackReducer.ResumeTask(state, firstTaskId);
-        Assert.Equal(firstTaskId, state.TaskStack[^1].TaskId);
-        Assert.Equal(SupervisorTaskStatus.Active, state.TaskStack[^1].Status);
+        Assert.Equal(firstTaskId, TaskStackReducer.GetCurrentTask(state)?.TaskId);
+        Assert.Equal(SupervisorTaskStatus.Active, TaskStackReducer.GetCurrentTask(state)?.Status);
 
         TaskStackReducer.CancelCurrent(state);
-        Assert.Single(state.TaskStack);
-        Assert.Equal("export_contacts", state.TaskStack[^1].TaskType);
-        Assert.Equal(SupervisorTaskStatus.Active, state.TaskStack[^1].Status);
+        Assert.Equal("export_contacts", TaskStackReducer.GetCurrentTask(state)?.TaskType);
+        Assert.DoesNotContain(state.TaskQueue, x => x.TaskType == "create_site");
     }
 
     [Fact]
@@ -92,6 +98,87 @@ public class SupervisorGraphTests
         Assert.Equal("menu", state.TaskStack[^1].TaskType);
         Assert.Equal(SupervisorTaskStatus.Active, state.TaskStack[^1].Status);
         Assert.Equal(state.TaskStack[^1].TaskId, state.CurrentTaskId);
+        Assert.Empty(state.TaskQueue);
+    }
+
+    [Fact]
+    public void TaskStackReducer_BatchIntents_QueuesTasksWithSameSourceMessage()
+    {
+        var state = new TestSupervisorState
+        {
+            Messages =
+            [
+                new HumanMessage { Id = "msg-1", Content = "weather and onboarding please" }
+            ]
+        };
+
+        var decision = SupervisorDecision.Batch(
+        [
+            new SupervisorIntentItem
+            {
+                IntentType = SupervisorIntentType.StartNew,
+                TaskType = "weather",
+                SourceUserMessageId = "msg-1",
+                Reason = "batch-start-weather",
+            },
+            new SupervisorIntentItem
+            {
+                IntentType = SupervisorIntentType.StartNew,
+                TaskType = "onboarding",
+                SourceUserMessageId = "msg-1",
+                Reason = "batch-start-onboarding",
+            }
+        ], "batch-start");
+        TaskStackReducer.Apply(state, decision);
+        TaskStackReducer.DrainNextIntent(state);
+        Assert.Equal("weather", TaskStackReducer.GetCurrentTask(state)?.TaskType);
+        Assert.Equal("msg-1", TaskStackReducer.GetCurrentTask(state)?.SourceUserMessageId);
+
+        var current = TaskStackReducer.GetCurrentTask(state)!;
+        current.Status = SupervisorTaskStatus.Completed;
+        TaskStackReducer.ContinueCurrent(state);
+        TaskStackReducer.DrainNextIntent(state);
+        Assert.Equal("onboarding", TaskStackReducer.GetCurrentTask(state)?.TaskType);
+        Assert.Equal("msg-1", TaskStackReducer.GetCurrentTask(state)?.SourceUserMessageId);
+    }
+
+    [Fact]
+    public void TaskStackReducer_FailCurrentAndClearQueue_CancelsPendingTasks()
+    {
+        var state = new TestSupervisorState();
+        var decision = SupervisorDecision.Batch(
+        [
+            new SupervisorIntentItem { IntentType = SupervisorIntentType.StartNew, TaskType = "weather" },
+            new SupervisorIntentItem { IntentType = SupervisorIntentType.StartNew, TaskType = "onboarding" }
+        ], "batch-start");
+        TaskStackReducer.Apply(state, decision);
+        TaskStackReducer.DrainNextIntent(state);
+        TaskStackReducer.DrainNextIntent(state);
+
+        TaskStackReducer.FailCurrentAndClearQueue(state, "task-error:test");
+
+        Assert.Empty(state.TaskQueue);
+        Assert.All(state.TaskStack.Where(x => x.TaskType is "weather" or "onboarding"),
+            x => Assert.Equal(SupervisorTaskStatus.Cancelled, x.Status));
+        Assert.Contains(state.History, x => x.Contains("queue-fail-fast", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void TaskStackReducer_SuspendInterruptedAndTryMoveNext_ReordersQueue()
+    {
+        var state = new TestSupervisorState();
+        TaskStackReducer.StartNew(state, "task-a");
+        TaskStackReducer.StartNew(state, "task-b");
+
+        Assert.Equal("task-b", TaskStackReducer.GetCurrentTask(state)?.TaskType);
+        Assert.Equal(["task-b", "task-a"], state.TaskQueue.Select(x => x.TaskType).ToArray());
+
+        var continued = TaskStackReducer.SuspendInterruptedAndTryMoveNext(state, "menu");
+
+        Assert.True(continued);
+        Assert.Equal("task-a", TaskStackReducer.GetCurrentTask(state)?.TaskType);
+        Assert.Equal(["task-a", "task-b"], state.TaskQueue.Select(x => x.TaskType).ToArray());
+        Assert.Equal(SupervisorTaskStatus.Suspended, state.TaskStack.Last(x => x.TaskType == "task-b").Status);
     }
 
     [Fact]
@@ -182,6 +269,120 @@ public class SupervisorGraphTests
         Assert.Contains(":menu", resumed.Flow);
         Assert.DoesNotContain(":task-done", resumed.Flow);
         Assert.Equal(SupervisorTaskStatus.Active, resumed.TaskStack.Last(x => x.TaskType == "worker").Status);
+    }
+
+    [Fact]
+    public async Task SupervisorGraph_BatchIntents_ExecutesQueueSequentially_WithSameSourceMessage()
+    {
+        var checkpointer = new MemoryCheckpointSaveFactory();
+        var weatherGraph = BuildEchoMappedTaskGraph(checkpointer);
+        var onboardingGraph = BuildEchoMappedTaskGraph(checkpointer);
+        var supervisor = new SupervisorGraph<TestSupervisorState>()
+            .SetMenuNode("menu", WithContextNode.Wrap<TestSupervisorState>("menu", (state, _, _, _) =>
+            {
+                var lastHuman = state.Messages.LastOrDefault() as HumanMessage;
+                if (lastHuman == null
+                    || string.IsNullOrWhiteSpace(lastHuman.Content)
+                    || string.Equals(lastHuman.Content, state.LastMenuHandledHumanMessage, StringComparison.Ordinal))
+                {
+                    state.Messages.Add(new AIMessage { Content = "Menu: waiting input." });
+                    state.InterruptCaller = SupervisorNodeNames.Menu;
+                    return Task.FromResult(WorkflowCommand<TestSupervisorState>.Create(gotoNode: WorkflowEdges.AskHuman, update: state));
+                }
+
+                state.LastMenuHandledHumanMessage = lastHuman.Content;
+                var decision = SupervisorDecision.Batch(
+                [
+                    new SupervisorIntentItem
+                    {
+                        IntentType = SupervisorIntentType.StartNew,
+                        TaskType = "weather",
+                        SourceUserMessageId = lastHuman.Id,
+                        Reason = "batch-weather"
+                    },
+                    new SupervisorIntentItem
+                    {
+                        IntentType = SupervisorIntentType.StartNew,
+                        TaskType = "onboarding",
+                        SourceUserMessageId = lastHuman.Id,
+                        Reason = "batch-onboarding"
+                    }
+                ], "batch-from-user");
+                state.MenuDecision = decision;
+                return Task.FromResult(WorkflowCommand<TestSupervisorState>.Create(gotoNode: SupervisorNodeNames.Intent, update: state));
+            }))
+            .SetIntentResolver((state, _, _) =>
+            {
+                var decision = state.MenuDecision ?? SupervisorDecision.Continue("default");
+                state.MenuDecision = null;
+                return Task.FromResult(decision);
+            })
+            .RegisterTask(
+                "weather",
+                weatherGraph,
+                initialStateMapping: (parent, _) => new EchoTaskState
+                {
+                    Messages = parent.Messages.Count > 0 ? [parent.Messages.Last()] : [],
+                },
+                completeStateMapping: (parent, sub, _) =>
+                {
+                    parent.Flow += $":weather-task:{sub.SeenHuman}";
+                    return parent;
+                })
+            .RegisterTask(
+                "onboarding",
+                onboardingGraph,
+                initialStateMapping: (parent, _) => new EchoTaskState
+                {
+                    Messages = parent.Messages.Count > 0 ? [parent.Messages.Last()] : [],
+                },
+                completeStateMapping: (parent, sub, _) =>
+                {
+                    parent.Flow += $":onboarding-task:{sub.SeenHuman}";
+                    return parent;
+                })
+            .Compile(checkpointer);
+
+        var run = await supervisor.InvokeAsync(
+            WorkflowCommand<TestSupervisorState>.Create(update: new TestSupervisorState(), resume: new HumanMessage { Id = "msg-batch", Content = "weather and onboarding please" }),
+            BaseConfig("supervisor-start-many-sequential"));
+
+        Assert.Equal(WorkflowInterruptReason.AskHuman, run.InterruptReason);
+        Assert.Contains(":weather-task:weather and onboarding please", run.Flow);
+        Assert.Contains(":onboarding-task:weather and onboarding please", run.Flow);
+    }
+
+    [Fact]
+    public async Task SupervisorGraph_TaskInterrupt_WithPendingQueue_ContinuesToNextTaskInSameRun()
+    {
+        var checkpointer = new MemoryCheckpointSaveFactory();
+        var interruptingTask = BuildInterruptingTaskGraph(checkpointer);
+        var simpleTask = BuildSimpleTaskGraph(checkpointer);
+        var supervisor = new SupervisorGraph<TestSupervisorState>()
+            .SetIntentResolver((state, _, _) =>
+            {
+                var hasRunnableTasks = state.TaskStack.Any(x => x.TaskType is "task-a" or "task-b");
+                if (!hasRunnableTasks)
+                {
+                    return Task.FromResult(SupervisorDecision.Batch(
+                    [
+                        new SupervisorIntentItem { IntentType = SupervisorIntentType.StartNew, TaskType = "task-b", Reason = "seed-b" },
+                        new SupervisorIntentItem { IntentType = SupervisorIntentType.StartNew, TaskType = "task-a", Reason = "seed-a" },
+                    ], "seed-queue"));
+                }
+
+                return Task.FromResult(SupervisorDecision.Continue("drain"));
+            })
+            .RegisterTask("task-a", interruptingTask)
+            .RegisterTask("task-b", simpleTask)
+            .Compile(checkpointer);
+
+        var run = await supervisor.InvokeAsync(
+            WorkflowCommand<TestSupervisorState>.Create(update: new TestSupervisorState()),
+            BaseConfig("supervisor-interrupt-continue-queue"));
+
+        Assert.Equal(WorkflowInterruptReason.AskHuman, run.InterruptReason);
+        Assert.Contains(":task", run.Flow); // task-b from BuildSimpleTaskGraph executed in same run
     }
 
     [Fact]
@@ -527,6 +728,23 @@ public class SupervisorGraphTests
             .AddEdge("onboarding", WorkflowEdges.AskHuman)
             .AddEdge("onboarding", WorkflowEdges.End)
             .AddEdge(WorkflowEdges.AskHuman, "onboarding");
+
+        return graph.Compile(checkpointer);
+    }
+
+    private static CompiledWorkflowGraph<EchoTaskState> BuildEchoMappedTaskGraph(ICheckpointSaverFactory checkpointer)
+    {
+        var graph = new WorkflowGraph<EchoTaskState>()
+            .AddNode("echo", (state, _, _, _) =>
+            {
+                var lastHuman = state.Messages.OfType<HumanMessage>().LastOrDefault();
+                state.SeenHuman = lastHuman?.Content;
+                return Task.FromResult(WorkflowCommand<EchoTaskState>.Create(
+                    gotoNode: WorkflowEdges.End,
+                    update: state));
+            })
+            .AddEdge(WorkflowEdges.Start, "echo")
+            .AddEdge("echo", WorkflowEdges.End);
 
         return graph.Compile(checkpointer);
     }

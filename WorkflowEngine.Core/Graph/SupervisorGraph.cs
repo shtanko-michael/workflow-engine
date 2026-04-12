@@ -12,6 +12,7 @@ public sealed class SupervisorGraph<TSupervisorState>
 {
     private const string IntentNodeName = SupervisorNodeNames.Intent;
     private const string ApplyNodeName = SupervisorNodeNames.StackApply;
+    private const string QueueNodeName = SupervisorNodeNames.QueueNext;
     private const string DispatchNodeName = SupervisorNodeNames.TaskDispatch;
     private const string MenuNodeName = SupervisorNodeNames.Menu;
 
@@ -117,20 +118,22 @@ public sealed class SupervisorGraph<TSupervisorState>
             .AddNode(WorkflowEdges.AskHuman, AskHumanNode.Create<TSupervisorState>(new AskHumanNodeOptions { CleanResume = false }))
             .AddNode(WorkflowEdges.ErrorHandler, ErrorHandlerNode.Create<TSupervisorState>())
             .AddNode(IntentNodeName, SupervisorIntentNode.Create(_intentResolver))
-            .AddNode(ApplyNodeName, SupervisorApplyDecisionNode.Create<TSupervisorState>(_stackOptions.MenuTaskType, MenuNodeName, DispatchNodeName, _stackOptions))
+            .AddNode(ApplyNodeName, SupervisorApplyDecisionNode.Create<TSupervisorState>(QueueNodeName, _stackOptions))
+            .AddNode(QueueNodeName, SupervisorQueueNextNode.Create<TSupervisorState>(_stackOptions.MenuTaskType, MenuNodeName, DispatchNodeName, _stackOptions))
             .AddNode(DispatchNodeName, TaskDispatchNode.Create<TSupervisorState>(nodeByTaskType, MenuNodeName))
             .AddNode(MenuNodeName, WrapMenuNode(menuNode, taskDescriptors))
             .AddEdge(WorkflowEdges.Start, IntentNodeName)
             .AddEdge(IntentNodeName, ApplyNodeName)
-            .AddEdge(ApplyNodeName, DispatchNodeName)
-            .AddEdge(ApplyNodeName, MenuNodeName)
+            .AddEdge(ApplyNodeName, QueueNodeName)
+            .AddEdge(QueueNodeName, DispatchNodeName)
+            .AddEdge(QueueNodeName, MenuNodeName)
             .AddEdge(DispatchNodeName, MenuNodeName)
             .AddEdge(MenuNodeName, IntentNodeName);
 
         foreach (var registration in _taskRegistrations.Values)
         {
             registration.AddNode(graph);
-            graph.AddEdge(registration.NodeName, IntentNodeName);
+            graph.AddEdge(registration.NodeName, QueueNodeName);
         }
 
         return graph;
@@ -229,6 +232,7 @@ public static class SupervisorNodeNames
 {
     public const string Intent = "__supervisor_intent__";
     public const string StackApply = "__supervisor_stack_apply__";
+    public const string QueueNext = "__supervisor_queue_next__";
     public const string TaskDispatch = "__supervisor_task_dispatch__";
     public const string Menu = "__supervisor_menu__";
 }
@@ -252,9 +256,7 @@ public static class SupervisorIntentNode
 public static class SupervisorApplyDecisionNode
 {
     public static WorkflowNode<TSupervisorState> Create<TSupervisorState>(
-        string menuTaskType,
-        string menuNodeName,
-        string dispatchNodeName,
+        string queueNodeName,
         TaskStackReducerOptions stackOptions)
         where TSupervisorState : WorkflowStateBase, ISupervisorState
     {
@@ -267,7 +269,27 @@ public static class SupervisorApplyDecisionNode
                 : SupervisorDecision.Continue();
             TaskStackReducer.Apply(state, decision, stackOptions);
             config.Configurable.Remove(SupervisorConfigKeys.SupervisorDecision);
+            return Task.FromResult(WorkflowCommand<TSupervisorState>.Create(gotoNode: queueNodeName, update: state));
+        });
+    }
+}
 
+public static class SupervisorQueueNextNode
+{
+    public static WorkflowNode<TSupervisorState> Create<TSupervisorState>(
+        string menuTaskType,
+        string menuNodeName,
+        string dispatchNodeName,
+        TaskStackReducerOptions stackOptions)
+        where TSupervisorState : WorkflowStateBase, ISupervisorState
+    {
+        ArgumentNullException.ThrowIfNull(stackOptions);
+        return WithContextNode.Wrap<TSupervisorState>("supervisor_queue_next", (state, _, _, _) =>
+        {
+            if (TaskStackReducer.HasPendingIntents(state))
+                TaskStackReducer.DrainNextIntent(state, stackOptions);
+            else
+                TaskStackReducer.ContinueCurrent(state, stackOptions);
             var currentTask = TaskStackReducer.GetCurrentTask(state);
             var gotoNode = currentTask == null || string.Equals(currentTask.TaskType, menuTaskType, StringComparison.OrdinalIgnoreCase)
                 ? menuNodeName

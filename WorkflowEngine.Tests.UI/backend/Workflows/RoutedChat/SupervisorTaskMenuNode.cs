@@ -100,11 +100,27 @@ public static class SupervisorTaskMenuNode
                 model: null,
                 CancellationToken.None).ConfigureAwait(false);
 
-            state.MenuDecision = MapDecision(classifyResponse.Output, allowedTaskTypes, suspendedTasks.Select(x => x.TaskId).ToHashSet(StringComparer.Ordinal));
-            if (!string.IsNullOrWhiteSpace(state.MenuDecision.Reason))
+            var mappedIntents = MapIntents(classifyResponse.Output, allowedTaskTypes, suspendedTasks.Select(x => x.TaskId).ToHashSet(StringComparer.Ordinal));
+            if (!string.IsNullOrWhiteSpace(lastHuman.Id))
             {
-                state.History.Add($"menu-decision:{state.MenuDecision.IntentType}:{state.MenuDecision.Reason}");
+                foreach (var intentItem in mappedIntents)
+                {
+                    intentItem.SourceUserMessageId ??= lastHuman.Id;
+                }
             }
+            if (mappedIntents.Count == 0)
+            {
+                mappedIntents.Add(new SupervisorIntentItem
+                {
+                    IntentType = SupervisorIntentType.ContinueCurrent,
+                    Reason = "fallback-empty-intents"
+                });
+            }
+            state.MenuIntents = mappedIntents;
+            var historyReason = string.Join("; ", mappedIntents
+                .Where(x => !string.IsNullOrWhiteSpace(x.Reason))
+                .Select(x => x.Reason!.Trim()));
+            state.History.Add($"menu-intents:{mappedIntents.Count}:{historyReason}");
 
             return WorkflowCommand<SupervisorRoutedChatState>.Create(
                 gotoNode: SupervisorNodeNames.Intent,
@@ -279,31 +295,58 @@ public static class SupervisorTaskMenuNode
         return startOptions.Length > 0 ? startOptions : null;
     }
 
-    private static SupervisorDecision MapDecision(
+    private static List<SupervisorIntentItem> MapIntents(
         SupervisorMenuStructuredOutput? output,
         HashSet<string> allowedTaskTypes,
         HashSet<string> suspendedTaskIds)
     {
-        if (output == null || string.IsNullOrWhiteSpace(output.Action))
-            return SupervisorDecision.Continue("fallback-empty");
+        if (output == null)
+            return [];
 
-        var action = output.Action.Trim().ToUpperInvariant();
-        var taskType = output.TaskType?.Trim();
-        var taskId = output.TaskId?.Trim();
-        var reason = output.Reason?.Trim();
+        var mappedIntents = new List<SupervisorIntentItem>();
+        if (output.Intents is { Length: > 0 })
+        {
+            foreach (var item in output.Intents)
+            {
+                var mapped = MapSingleIntent(item?.Action, item?.TaskType, item?.TaskId, item?.Reason, allowedTaskTypes, suspendedTaskIds);
+                if (mapped != null)
+                    mappedIntents.Add(mapped);
+            }
+        }
+
+        return mappedIntents;
+    }
+
+    private static SupervisorIntentItem? MapSingleIntent(
+        string? actionRaw,
+        string? taskTypeRaw,
+        string? taskIdRaw,
+        string? reasonRaw,
+        HashSet<string> allowedTaskTypes,
+        HashSet<string> suspendedTaskIds)
+    {
+        if (string.IsNullOrWhiteSpace(actionRaw))
+            return null;
+
+        var action = actionRaw.Trim().ToUpperInvariant();
+        var taskType = taskTypeRaw?.Trim();
+        var taskId = taskIdRaw?.Trim();
+        var reason = reasonRaw?.Trim();
 
         return action switch
         {
-            "CONTINUE_CURRENT" => SupervisorDecision.Continue(reason),
+            "CONTINUE_CURRENT" when !string.IsNullOrWhiteSpace(taskId) && suspendedTaskIds.Contains(taskId) =>
+                new SupervisorIntentItem { IntentType = SupervisorIntentType.ResumeTask, TaskId = taskId, Reason = string.IsNullOrWhiteSpace(reason) ? "normalized-from-continue-current" : reason },
+            "CONTINUE_CURRENT" => new SupervisorIntentItem { IntentType = SupervisorIntentType.ContinueCurrent, TaskId = taskId, Reason = reason },
             "START_NEW" when !string.IsNullOrWhiteSpace(taskType) && allowedTaskTypes.Contains(taskType) =>
-                SupervisorDecision.StartNew(taskType, reason),
+                new SupervisorIntentItem { IntentType = SupervisorIntentType.StartNew, TaskType = taskType, Reason = reason },
             "SWITCH_TO" when !string.IsNullOrWhiteSpace(taskType) && allowedTaskTypes.Contains(taskType) =>
-                SupervisorDecision.SwitchTo(taskType, reason),
-            "CANCEL_CURRENT" => SupervisorDecision.CancelCurrent(reason),
-            "CANCEL_ALL" => SupervisorDecision.CancelAll(reason),
+                new SupervisorIntentItem { IntentType = SupervisorIntentType.SwitchTo, TaskType = taskType, Reason = reason },
+            "CANCEL_CURRENT" => new SupervisorIntentItem { IntentType = SupervisorIntentType.CancelCurrent, Reason = reason },
+            "CANCEL_ALL" => new SupervisorIntentItem { IntentType = SupervisorIntentType.CancelAll, Reason = reason },
             "RESUME_TASK" when !string.IsNullOrWhiteSpace(taskId) && suspendedTaskIds.Contains(taskId) =>
-                SupervisorDecision.ResumeTask(taskId, reason),
-            _ => SupervisorDecision.Continue($"fallback-invalid:{action}")
+                new SupervisorIntentItem { IntentType = SupervisorIntentType.ResumeTask, TaskId = taskId, Reason = reason },
+            _ => null
         };
     }
 

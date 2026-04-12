@@ -75,118 +75,126 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
 
 		await SafeNotifyInterceptorAsync(config, state, (i, c, s) => i.OnGraphStartedAsync(c, s));
 
-		try
+		while (true)
 		{
-			config.ParentCheckpointId = config.CheckpointId;
-			// initially set next checkpoint id to be able to send proper checkpoint id to gateway
-			config.CheckpointId = Guid.NewGuid().ToString();
-			while (currentNode != null && currentNode != WorkflowEdges.End)
+			try
 			{
-				_logger?.LogDebug("Executing node: {NodeName}", currentNode);
-
-				if (!_nodes.TryGetValue(currentNode, out var node))
+				config.ParentCheckpointId = config.CheckpointId;
+				// initially set next checkpoint id to be able to send proper checkpoint id to gateway
+				config.CheckpointId = Guid.NewGuid().ToString();
+				while (currentNode != null && currentNode != WorkflowEdges.End)
 				{
-					throw new InvalidOperationException($"Node '{currentNode}' not found");
+					_logger?.LogDebug("Executing node: {NodeName}", currentNode);
+
+					if (!_nodes.TryGetValue(currentNode, out var node))
+					{
+						throw new InvalidOperationException($"Node '{currentNode}' not found");
+					}
+
+					await SafeNotifyInterceptorAsync(config, state, (i, c, s) => i.OnNodeStartedAsync(currentNode, c, s));
+
+					// Execute node
+					var nodeCommand = await node(state, config.Context, (ex) => errorHandler((ex, config, state)), config);
+
+					await SafeNotifyInterceptorAsync(config, state, (i, c, s) => i.OnNodeCompletedAsync(currentNode, c, s));
+
+					// Apply state update
+					if (nodeCommand.Update != null)
+					{
+						state = MergeState(state, nodeCommand.Update);
+					}
+
+					// Determine next node
+					var nextNode = DetermineNextNode(currentNode, nodeCommand, state);
+					switch (nextNode)
+					{
+						case WorkflowEdges.End:
+							state.WorkflowCompleted = true;
+							break;
+						// double-check interrupt caller is set
+						case WorkflowEdges.AskHuman or WorkflowEdges.ErrorHandler
+							when string.IsNullOrEmpty(state.InterruptCaller):
+							state.InterruptCaller = currentNode;
+							break;
+					}
+
+					// Save checkpoint (skip if going to AskHuman/Error, those are handled in catch blocks)
+					if (nextNode is not (WorkflowEdges.AskHuman or WorkflowEdges.ErrorHandler)
+					    && !ShouldSkipCheckpoint(config, currentNode))
+					{
+						await SaveCheckpointAsync(config, state, nextNode);
+					}
+
+					currentNode = nextNode;
 				}
 
-				await SafeNotifyInterceptorAsync(config, state, (i, c, s) => i.OnNodeStartedAsync(currentNode, c, s));
-
-				// Execute node
-				var nodeCommand = await node(state, config.Context, (ex) => errorHandler((ex, config, state)), config);
-
-				await SafeNotifyInterceptorAsync(config, state, (i, c, s) => i.OnNodeCompletedAsync(currentNode, c, s));
-
-				// Apply state update
-				if (nodeCommand.Update != null)
-				{
-					state = MergeState(state, nodeCommand.Update);
-				}
-
-				// Determine next node
-				var nextNode = DetermineNextNode(currentNode, nodeCommand, state);
-				switch (nextNode)
-				{
-					case WorkflowEdges.End:
-						state.WorkflowCompleted = true;
-						break;
-					// double-check interrupt caller is set
-					case WorkflowEdges.AskHuman or WorkflowEdges.ErrorHandler
-						when string.IsNullOrEmpty(state.InterruptCaller):
-						state.InterruptCaller = currentNode;
-						break;
-				}
-
-				// Save checkpoint (skip if going to AskHuman/Error, those are handled in catch blocks)
-				if (nextNode is not (WorkflowEdges.AskHuman or WorkflowEdges.ErrorHandler)
-				    && !ShouldSkipCheckpoint(config, currentNode))
-				{
-					await SaveCheckpointAsync(config, state, nextNode);
-				}
-
-				currentNode = nextNode;
+				await SafeNotifyInterceptorAsync(config, state, (i, c, s) => i.OnGraphCompletedAsync(c, s, WorkflowGraphCompletionReason.Normal));
+				return state;
 			}
+			catch (WorkflowInterruptErrorException interruptEx)
+			{
+				_logger?.LogInformation("Workflow interrupted due to error: {Message}", interruptEx.Message);
 
-			await SafeNotifyInterceptorAsync(config, state, (i, c, s) => i.OnGraphCompletedAsync(c, s, WorkflowGraphCompletionReason.Normal));
-			return state;
-		}
-		catch (WorkflowInterruptErrorException interruptEx)
-		{
-			_logger?.LogInformation("Workflow interrupted due to error: {Message}", interruptEx.Message);
+				state.InterruptRequestId = interruptEx.RequestId;
+				state.InterruptCaller = interruptEx.Caller;
+				state.InterruptReason = WorkflowInterruptReason.Error;
 
-			state.InterruptRequestId = interruptEx.RequestId;
-			state.InterruptCaller = interruptEx.Caller;
-			state.InterruptReason = WorkflowInterruptReason.Error;
+				await SafeNotifyInterceptorAsync(config, state, (i, c, s) => i.OnErrorAsync(c, s));
+				await SafeNotifyInterceptorAsync(config, state, (i, c, s) => i.OnInterruptAsync(c, s));
+				await SafeNotifyInterceptorAsync(config, state, (i, c, s) => i.OnGraphCompletedAsync(c, s, WorkflowGraphCompletionReason.Error));
 
-			await SafeNotifyInterceptorAsync(config, state, (i, c, s) => i.OnErrorAsync(c, s));
-			await SafeNotifyInterceptorAsync(config, state, (i, c, s) => i.OnInterruptAsync(c, s));
-			await SafeNotifyInterceptorAsync(config, state, (i, c, s) => i.OnGraphCompletedAsync(c, s, WorkflowGraphCompletionReason.Error));
+				// save checkpoint at the node that interrupted the workflow basically AskHuman node
+				await SaveCheckpointAsync(config, state, WorkflowEdges.AskHuman);
 
-			// save checkpoint at the node that interrupted the workflow basically AskHuman node
-			await SaveCheckpointAsync(config, state, WorkflowEdges.AskHuman);
+				// Return current state - workflow will resume later
+				return state;
+			}
+			catch (SubgraphWorkflowInterruptException interruptEx)
+			{
+				_logger?.LogInformation("Subgraph workflow interrupted: {Message}", interruptEx.Message);
 
-			// Return current state - workflow will resume later
-			return state;
-		}
-		catch (SubgraphWorkflowInterruptException interruptEx)
-		{
-			_logger?.LogInformation("Subgraph workflow interrupted: {Message}", interruptEx.Message);
+				// var interruptResumeNode = state.InterruptCaller ?? currentNode;
+				state.InterruptRequestId = interruptEx.RequestId;
+				state.InterruptCaller = interruptEx.Caller;
+				state.InterruptReason = WorkflowInterruptReason.AskHuman;
 
-			// var interruptResumeNode = state.InterruptCaller ?? currentNode;
-			state.InterruptRequestId = interruptEx.RequestId;
-			state.InterruptCaller = interruptEx.Caller;
-			state.InterruptReason = WorkflowInterruptReason.AskHuman;
+				await SafeNotifyInterceptorAsync(config, state, (i, c, s) => i.OnInterruptAsync(c, s));
+				await SafeNotifyInterceptorAsync(config, state, (i, c, s) => i.OnGraphCompletedAsync(c, s, WorkflowGraphCompletionReason.Interrupt));
 
-			await SafeNotifyInterceptorAsync(config, state, (i, c, s) => i.OnInterruptAsync(c, s));
-			await SafeNotifyInterceptorAsync(config, state, (i, c, s) => i.OnGraphCompletedAsync(c, s, WorkflowGraphCompletionReason.Interrupt));
+				// save checkpoint at the subgraph node that interrupted the parent
+				await SaveCheckpointAsync(config, state, state.InterruptCaller);
 
-			// save checkpoint at the subgraph node that interrupted the parent
-			await SaveCheckpointAsync(config, state, state.InterruptCaller);
+				// Return current state - workflow will resume later
+				return state;
+			}
+			catch (TaskWorkflowInterruptException interruptEx) {
+				_logger?.LogInformation("Task workflow interrupted: {Message}", interruptEx.Message);
+				if (interruptEx.ContinueExecution && !string.IsNullOrWhiteSpace(interruptEx.Caller))
+				{
+					currentNode = interruptEx.Caller;
+					continue;
+				}
+				state.InterruptRequestId = interruptEx.RequestId;
+				state.InterruptCaller = interruptEx.Caller;
+				state.InterruptReason = WorkflowInterruptReason.AskHuman;
+				await SafeNotifyInterceptorAsync(config, state, (i, c, s) => i.OnInterruptAsync(c, s));
+				await SafeNotifyInterceptorAsync(config, state, (i, c, s) => i.OnGraphCompletedAsync(c, s, WorkflowGraphCompletionReason.Interrupt));
+				await SaveCheckpointAsync(config, state, WorkflowEdges.AskHuman);
+				return state;
+			}
+			catch (WorkflowInterruptException interruptEx) {
+				_logger?.LogInformation("Workflow interrupted: {Message}", interruptEx.Message);
 
-			// Return current state - workflow will resume later
-			return state;
-		}
-		catch (TaskWorkflowInterruptException interruptEx) {
-			_logger?.LogInformation("Task workflow interrupted: {Message}", interruptEx.Message);
-			state.InterruptRequestId = interruptEx.RequestId;
-			state.InterruptCaller = SupervisorNodeNames.Menu;
-			state.InterruptReason = WorkflowInterruptReason.AskHuman;
-			await SafeNotifyInterceptorAsync(config, state, (i, c, s) => i.OnInterruptAsync(c, s));
-			await SafeNotifyInterceptorAsync(config, state, (i, c, s) => i.OnGraphCompletedAsync(c, s, WorkflowGraphCompletionReason.Interrupt));
-			await SaveCheckpointAsync(config, state, WorkflowEdges.AskHuman);
-			return state;
-		}
-		catch (WorkflowInterruptException interruptEx) {
-			_logger?.LogInformation("Workflow interrupted: {Message}", interruptEx.Message);
+				// var interruptResumeNode = state.InterruptCaller ?? currentNode;
+				state.InterruptRequestId = interruptEx.RequestId;
+				state.InterruptCaller = interruptEx.Caller;
+				state.InterruptReason = WorkflowInterruptReason.AskHuman;
+				// save checkpoint at the node that interrupted the workflow basically AskHuman node
+				await SaveCheckpointAsync(config, state, WorkflowEdges.AskHuman);
 
-			// var interruptResumeNode = state.InterruptCaller ?? currentNode;
-			state.InterruptRequestId = interruptEx.RequestId;
-			state.InterruptCaller = interruptEx.Caller;
-			state.InterruptReason = WorkflowInterruptReason.AskHuman;
-			// save checkpoint at the node that interrupted the workflow basically AskHuman node
-			await SaveCheckpointAsync(config, state, WorkflowEdges.AskHuman);
-
-			// Return current state - workflow will resume later
-			return state;
+				// Return current state - workflow will resume later
+				return state;
+			}
 		}
 	}
 
@@ -457,6 +465,7 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
 
 		return currentNode is SupervisorNodeNames.Intent
 			or SupervisorNodeNames.StackApply
+			or SupervisorNodeNames.QueueNext
 			or SupervisorNodeNames.TaskDispatch;
 	}
 

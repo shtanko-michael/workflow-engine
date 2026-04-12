@@ -33,8 +33,15 @@ public class SubgraphWorkflowInterruptException : WorkflowInterruptException
 /// Exception thrown when task workflow is interrupted (e.g., for human input)
 /// </summary>
 public class TaskWorkflowInterruptException : WorkflowInterruptException {
+	public bool ContinueExecution { get; }
+
 	public TaskWorkflowInterruptException(string requestId, string caller)
+	  : this(requestId, caller, continueExecution: false) {
+	}
+
+	public TaskWorkflowInterruptException(string requestId, string caller, bool continueExecution)
 	  : base(requestId, caller) {
+		ContinueExecution = continueExecution;
 	}
 }
 

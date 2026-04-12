@@ -35,16 +35,48 @@ Rules:
 1) If the latest message clearly continues the active task conversation, use CONTINUE_CURRENT.
 2) Use conversationHistory to detect topic change: if the latest message shifts topic compared to history, prefer SWITCH_TO or START_NEW.
 3) taskType must be exactly one value from availableTasks[].taskType.
-4) taskId must be exactly one value from suspendedTasks[].taskId.
-5) If user asks about task progress, task counts, or statuses, prefer SWITCH_TO/START_NEW with the task support type when available.
-6) If unsure, prefer CONTINUE_CURRENT.
+4) taskId must always be provided for every intent item.
+5) For CONTINUE_CURRENT, taskId must be activeTask.taskId.
+6) If user wants to continue a suspended task, use RESUME_TASK with that exact suspendedTasks[].taskId.
+7) For START_NEW, taskId must be an empty string.
+8) If user asks about task progress, task counts, or statuses, prefer SWITCH_TO/START_NEW with the task support type when available.
+9) If unsure, do NOT auto-include CONTINUE_CURRENT. Prefer the most explicit user request.
+10) CONTINUE_CURRENT is allowed only when the latest message explicitly answers, clarifies, or references the current active task/question.
+11) If the latest message is only about another task/topic and has no explicit onboarding/active-task continuation signal, do not include CONTINUE_CURRENT.
+
+Execution priority and ordering:
+- Build intents in this order:
+  1) continue current active task (CONTINUE_CURRENT with activeTask.taskId),
+  2) resume/switch to existing suspended tasks (RESUME_TASK or SWITCH_TO),
+  3) start brand-new tasks (START_NEW).
+- Keep array order equal to execution order.
+- Priority applies only to intents that are actually needed; never add extra intents "just in case".
+
+You MUST always return intents as an array.
+Even for one intent, return an array with exactly one object.
+Keep operations in execution order.
+If one user message combines continuation of active task and explicit request for another task, return multiple intents.
+Example: "I am sales manager and what weather in NYC" while onboarding is active =>
+[
+  { "action": "CONTINUE_CURRENT", "taskType": "", "taskId": "active-onboarding-task-id", "reason": "contains onboarding answer" },
+  { "action": "START_NEW", "taskType": "weather", "taskId": "", "reason": "explicit weather request" }
+]
+
+Example: "what weather in Moscow" while onboarding is active, but message has no onboarding answer/reference =>
+[
+  { "action": "START_NEW", "taskType": "weather", "taskId": "", "reason": "explicit weather request only; no active-task continuation signal" }
+]
 
 Return ONLY valid JSON, no extra text:
 {
-  "action": "CONTINUE_CURRENT|START_NEW|SWITCH_TO|CANCEL_CURRENT|CANCEL_ALL|RESUME_TASK",
-  "taskType": "optional-task-type",
-  "taskId": "optional-task-id",
-  "reason": "short reason"
+  "intents": [
+    {
+      "action": "START_NEW|SWITCH_TO|CONTINUE_CURRENT|RESUME_TASK|CANCEL_CURRENT|CANCEL_ALL",
+      "taskType": "optional-task-type",
+      "taskId": "optional-task-id",
+      "reason": "short reason"
+    }
+  ]
 }
 """;
 

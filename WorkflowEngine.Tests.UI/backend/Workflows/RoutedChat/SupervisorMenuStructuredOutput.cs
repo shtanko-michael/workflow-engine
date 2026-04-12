@@ -7,6 +7,12 @@ namespace WorkflowEngine.Tests.UI.Backend.Workflows.RoutedChat;
 /// </summary>
 public sealed class SupervisorMenuStructuredOutput
 {
+    [JsonPropertyName("intents")]
+    public SupervisorMenuIntentOutput[]? Intents { get; set; }
+}
+
+public sealed class SupervisorMenuIntentOutput
+{
     [JsonPropertyName("action")]
     public string? Action { get; set; }
 
