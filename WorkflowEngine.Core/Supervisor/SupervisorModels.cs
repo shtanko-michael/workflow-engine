@@ -118,4 +118,5 @@ public class SupervisorTaskDescriptor
     public string TaskType { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public string Description { get; set; } = string.Empty;
+    public bool AllowMultipleInstances { get; set; } = true;
 }

@@ -72,7 +72,7 @@ public static class SupervisorTaskMenuNode
             var payload = new
             {
                 availableTasks = taskDescriptors
-                    .Select(x => new { x.TaskType, x.Name, x.Description })
+                    .Select(x => new { x.TaskType, x.Name, x.Description, x.AllowMultipleInstances })
                     .OrderBy(x => x.TaskType)
                     .ToArray(),
                 activeTask = activeTask == null ? null : new { activeTask.TaskId, activeTask.TaskType, activeTask.Status },
@@ -191,7 +191,7 @@ public static class SupervisorTaskMenuNode
         var payload = new
         {
             availableTasks = taskDescriptors
-                .Select(x => new { x.TaskType, x.Name, x.Description })
+                .Select(x => new { x.TaskType, x.Name, x.Description, x.AllowMultipleInstances })
                 .OrderBy(x => x.TaskType)
                 .ToArray(),
             activeTask = activeTask == null ? null : new { activeTask.TaskId, activeTask.TaskType, activeTask.Status },

@@ -8,6 +8,67 @@ public sealed class TaskStackReducerOptions
 
 public static class TaskStackReducer
 {
+    public static SupervisorDecision NormalizeDecisionByTaskPolicies<TState>(
+        TState state,
+        SupervisorDecision decision,
+        IReadOnlyDictionary<string, bool> allowMultipleByTaskType)
+        where TState : ISupervisorState
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        ArgumentNullException.ThrowIfNull(decision);
+        ArgumentNullException.ThrowIfNull(allowMultipleByTaskType);
+
+        var items = ToIntentItems(decision).ToArray();
+        if (items.Length == 0)
+            return decision;
+
+        var normalized = new List<SupervisorIntentItem>(items.Length);
+        foreach (var item in items)
+        {
+            var clone = new SupervisorIntentItem
+            {
+                IntentType = item.IntentType,
+                TaskType = item.TaskType,
+                TaskId = item.TaskId,
+                SourceUserMessageId = item.SourceUserMessageId,
+                Reason = item.Reason,
+                EnqueuedAt = item.EnqueuedAt
+            };
+
+            if (clone.IntentType == SupervisorIntentType.StartNew
+                && !string.IsNullOrWhiteSpace(clone.TaskType)
+                && allowMultipleByTaskType.TryGetValue(clone.TaskType, out var allowMultiple)
+                && !allowMultiple)
+            {
+                var existing = FindAliveTaskByType(state, clone.TaskType);
+                if (existing != null)
+                {
+                    clone.IntentType = SupervisorIntentType.SwitchTo;
+                    clone.TaskId = existing.TaskId;
+                    clone.Reason = string.IsNullOrWhiteSpace(clone.Reason)
+                        ? "single-instance:reuse-existing"
+                        : $"{clone.Reason}; single-instance:reuse-existing";
+                }
+            }
+
+            normalized.Add(clone);
+        }
+
+        return SupervisorDecision.Batch(normalized, decision.Reason);
+    }
+
+    public static TaskInstance? FindAliveTaskByType<TState>(TState state, string taskType)
+        where TState : ISupervisorState
+    {
+        ArgumentNullException.ThrowIfNull(state);
+        if (string.IsNullOrWhiteSpace(taskType))
+            return null;
+
+        return state.TaskStack.FindLast(x =>
+            string.Equals(x.TaskType, taskType, StringComparison.OrdinalIgnoreCase) &&
+            x.Status is TaskStatus.Active or TaskStatus.Suspended);
+    }
+
     public static TState Apply<TState>(TState state, SupervisorDecision decision, TaskStackReducerOptions? options = null)
         where TState : ISupervisorState
     {

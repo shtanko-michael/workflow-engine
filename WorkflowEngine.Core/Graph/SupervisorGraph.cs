@@ -66,7 +66,8 @@ public sealed class SupervisorGraph<TSupervisorState>
         string taskType,
         CompiledWorkflowGraph<TSupervisorState> taskGraph,
         string? taskName = null,
-        string? taskDescription = null)
+        string? taskDescription = null,
+        bool allowMultipleInstances = true)
     {
         ValidateTaskType(taskType);
         ArgumentNullException.ThrowIfNull(taskGraph);
@@ -74,6 +75,7 @@ public sealed class SupervisorGraph<TSupervisorState>
             taskType,
             taskName ?? taskType,
             taskDescription ?? string.Empty,
+            allowMultipleInstances,
             taskGraph,
             BuildTaskNodeName(taskType));
         return this;
@@ -85,7 +87,8 @@ public sealed class SupervisorGraph<TSupervisorState>
         Func<TSupervisorState, TaskInstance, TTaskState> initialStateMapping,
         Func<TSupervisorState, TTaskState, TaskInstance, TSupervisorState> completeStateMapping,
         string? taskName = null,
-        string? taskDescription = null)
+        string? taskDescription = null,
+        bool allowMultipleInstances = true)
         where TTaskState : WorkflowStateBase
     {
         ValidateTaskType(taskType);
@@ -96,6 +99,7 @@ public sealed class SupervisorGraph<TSupervisorState>
             taskType,
             taskName ?? taskType,
             taskDescription ?? string.Empty,
+            allowMultipleInstances,
             taskGraph,
             BuildTaskNodeName(taskType),
             initialStateMapping,
@@ -118,7 +122,7 @@ public sealed class SupervisorGraph<TSupervisorState>
             .AddNode(WorkflowEdges.AskHuman, AskHumanNode.Create<TSupervisorState>(new AskHumanNodeOptions { CleanResume = false }))
             .AddNode(WorkflowEdges.ErrorHandler, ErrorHandlerNode.Create<TSupervisorState>())
             .AddNode(IntentNodeName, SupervisorIntentNode.Create(_intentResolver))
-            .AddNode(ApplyNodeName, SupervisorApplyDecisionNode.Create<TSupervisorState>(QueueNodeName, _stackOptions))
+            .AddNode(ApplyNodeName, SupervisorApplyDecisionNode.Create<TSupervisorState>(QueueNodeName, _stackOptions, taskDescriptors))
             .AddNode(QueueNodeName, SupervisorQueueNextNode.Create<TSupervisorState>(_stackOptions.MenuTaskType, MenuNodeName, DispatchNodeName, _stackOptions))
             .AddNode(DispatchNodeName, TaskDispatchNode.Create<TSupervisorState>(nodeByTaskType, MenuNodeName))
             .AddNode(MenuNodeName, WrapMenuNode(menuNode, taskDescriptors))
@@ -181,13 +185,14 @@ public sealed class SupervisorGraph<TSupervisorState>
         return resumeMessage;
     }
 
-    private abstract class TaskRegistrationBase(string taskType, string taskName, string taskDescription, string nodeName) {
+    private abstract class TaskRegistrationBase(string taskType, string taskName, string taskDescription, bool allowMultipleInstances, string nodeName) {
         public string TaskType { get; } = taskType;
         public string NodeName { get; } = nodeName;
         public SupervisorTaskDescriptor Descriptor { get; } = new() {
             TaskType = taskType,
             Name = taskName,
-            Description = taskDescription
+            Description = taskDescription,
+            AllowMultipleInstances = allowMultipleInstances,
         };
         public abstract void AddNode(WorkflowGraph<TSupervisorState> graph);
     }
@@ -196,8 +201,9 @@ public sealed class SupervisorGraph<TSupervisorState>
         string taskType,
         string taskName,
         string taskDescription,
+        bool allowMultipleInstances,
         CompiledWorkflowGraph<TSupervisorState> taskGraph,
-        string nodeName) : TaskRegistrationBase(taskType, taskName, taskDescription, nodeName)
+        string nodeName) : TaskRegistrationBase(taskType, taskName, taskDescription, allowMultipleInstances, nodeName)
     {
         public override void AddNode(WorkflowGraph<TSupervisorState> graph)
         {
@@ -209,11 +215,12 @@ public sealed class SupervisorGraph<TSupervisorState>
         string taskType,
         string taskName,
         string taskDescription,
+        bool allowMultipleInstances,
         CompiledWorkflowGraph<TTaskState> taskGraph,
         string nodeName,
         Func<TSupervisorState, TaskInstance, TTaskState> initialStateMapping,
         Func<TSupervisorState, TTaskState, TaskInstance, TSupervisorState> completeStateMapping)
-        : TaskRegistrationBase(taskType, taskName, taskDescription, nodeName)
+        : TaskRegistrationBase(taskType, taskName, taskDescription, allowMultipleInstances, nodeName)
         where TTaskState : WorkflowStateBase
     {
         public override void AddNode(WorkflowGraph<TSupervisorState> graph)
@@ -257,16 +264,22 @@ public static class SupervisorApplyDecisionNode
 {
     public static WorkflowNode<TSupervisorState> Create<TSupervisorState>(
         string queueNodeName,
-        TaskStackReducerOptions stackOptions)
+        TaskStackReducerOptions stackOptions,
+        IReadOnlyCollection<SupervisorTaskDescriptor> taskDescriptors)
         where TSupervisorState : WorkflowStateBase, ISupervisorState
     {
         ArgumentNullException.ThrowIfNull(stackOptions);
+        ArgumentNullException.ThrowIfNull(taskDescriptors);
         return WithContextNode.Wrap<TSupervisorState>("supervisor_stack_apply", (state, _, _, config) =>
         {
             var decision = config.Configurable.TryGetValue(SupervisorConfigKeys.SupervisorDecision, out var decisionObj)
                                && decisionObj is SupervisorDecision typedDecision
                 ? typedDecision
                 : SupervisorDecision.Continue();
+            var allowMultipleByTaskType = taskDescriptors
+                .GroupBy(x => x.TaskType, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.First().AllowMultipleInstances, StringComparer.OrdinalIgnoreCase);
+            decision = TaskStackReducer.NormalizeDecisionByTaskPolicies(state, decision, allowMultipleByTaskType);
             TaskStackReducer.Apply(state, decision, stackOptions);
             config.Configurable.Remove(SupervisorConfigKeys.SupervisorDecision);
             return Task.FromResult(WorkflowCommand<TSupervisorState>.Create(gotoNode: queueNodeName, update: state));

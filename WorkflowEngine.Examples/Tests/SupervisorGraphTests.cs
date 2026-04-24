@@ -182,6 +182,44 @@ public class SupervisorGraphTests
     }
 
     [Fact]
+    public void TaskStackReducer_NormalizeDecisionByTaskPolicies_StartNewBecomesSwitchTo_ForSingleInstance()
+    {
+        var state = new TestSupervisorState();
+        TaskStackReducer.StartNew(state, "onboarding");
+
+        var normalized = TaskStackReducer.NormalizeDecisionByTaskPolicies(
+            state,
+            SupervisorDecision.StartNew("onboarding", "user-restart"),
+            new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["onboarding"] = false
+            });
+
+        var intent = Assert.Single(normalized.IntentItems);
+        Assert.Equal(SupervisorIntentType.SwitchTo, intent.IntentType);
+        Assert.Equal("onboarding", intent.TaskType);
+    }
+
+    [Fact]
+    public void TaskStackReducer_NormalizeDecisionByTaskPolicies_StartNewStaysStartNew_ForMultiInstance()
+    {
+        var state = new TestSupervisorState();
+        TaskStackReducer.StartNew(state, "onboarding");
+
+        var normalized = TaskStackReducer.NormalizeDecisionByTaskPolicies(
+            state,
+            SupervisorDecision.StartNew("onboarding", "user-restart"),
+            new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["onboarding"] = true
+            });
+
+        var intent = Assert.Single(normalized.IntentItems);
+        Assert.Equal(SupervisorIntentType.StartNew, intent.IntentType);
+        Assert.Equal("onboarding", intent.TaskType);
+    }
+
+    [Fact]
     public async Task SupervisorGraph_UsesCustomMenuNode_WhenConfigured()
     {
         var checkpointer = new MemoryCheckpointSaveFactory();
@@ -383,6 +421,66 @@ public class SupervisorGraphTests
 
         Assert.Equal(WorkflowInterruptReason.AskHuman, run.InterruptReason);
         Assert.Contains(":task", run.Flow); // task-b from BuildSimpleTaskGraph executed in same run
+    }
+
+    [Fact]
+    public async Task SupervisorGraph_SingleInstanceTask_DoesNotCreateDuplicateOnRepeatedStartNew()
+    {
+        var checkpointer = new MemoryCheckpointSaveFactory();
+        var interruptingTask = BuildInterruptingTaskGraph(checkpointer);
+        var supervisor = new SupervisorGraph<TestSupervisorState>()
+            .SetIntentResolver((state, _, _) =>
+            {
+                if (!state.History.Any(x => string.Equals(x, "seed-single", StringComparison.Ordinal)))
+                {
+                    state.History.Add("seed-single");
+                    return Task.FromResult(SupervisorDecision.Batch(
+                    [
+                        new SupervisorIntentItem { IntentType = SupervisorIntentType.StartNew, TaskType = "worker", Reason = "first" },
+                        new SupervisorIntentItem { IntentType = SupervisorIntentType.StartNew, TaskType = "worker", Reason = "second" },
+                    ], "seed-single"));
+                }
+
+                return Task.FromResult(SupervisorDecision.Continue("drain"));
+            })
+            .RegisterTask("worker", interruptingTask, allowMultipleInstances: false)
+            .Compile(checkpointer);
+
+        var run = await supervisor.InvokeAsync(
+            WorkflowCommand<TestSupervisorState>.Create(update: new TestSupervisorState()),
+            BaseConfig("supervisor-single-instance-startnew"));
+
+        Assert.Equal(1, run.TaskStack.Count(x => x.TaskType == "worker" && x.Status is SupervisorTaskStatus.Active or SupervisorTaskStatus.Suspended));
+    }
+
+    [Fact]
+    public async Task SupervisorGraph_MultiInstanceTask_CanCreateDuplicateOnRepeatedStartNew()
+    {
+        var checkpointer = new MemoryCheckpointSaveFactory();
+        var interruptingTask = BuildInterruptingTaskGraph(checkpointer);
+        var supervisor = new SupervisorGraph<TestSupervisorState>()
+            .SetIntentResolver((state, _, _) =>
+            {
+                if (!state.History.Any(x => string.Equals(x, "seed-multi", StringComparison.Ordinal)))
+                {
+                    state.History.Add("seed-multi");
+                    return Task.FromResult(SupervisorDecision.Batch(
+                    [
+                        new SupervisorIntentItem { IntentType = SupervisorIntentType.StartNew, TaskType = "worker", Reason = "first" },
+                        new SupervisorIntentItem { IntentType = SupervisorIntentType.StartNew, TaskType = "worker", Reason = "second" },
+                    ], "seed-multi"));
+                }
+
+                return Task.FromResult(SupervisorDecision.Continue("drain"));
+            })
+            .RegisterTask("worker", interruptingTask, allowMultipleInstances: true)
+            .Compile(checkpointer);
+
+        var run = await supervisor.InvokeAsync(
+            WorkflowCommand<TestSupervisorState>.Create(update: new TestSupervisorState()),
+            BaseConfig("supervisor-multi-instance-startnew"));
+
+        Assert.True(run.TaskStack.Count(x => x.TaskType == "worker") >= 2);
     }
 
     [Fact]

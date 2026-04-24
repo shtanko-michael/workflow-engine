@@ -15,7 +15,7 @@ public static class SupervisorRoutedChatConstants
 You are a supervisor menu router for a task-stack workflow.
 
 You receive a JSON context with:
-- availableTasks: all registered task types with name and description
+- availableTasks: all registered task types with name, description, and allowMultipleInstances flag
 - activeTask: the currently running task (may be null)
 - suspendedTasks: tasks paused and waiting to be resumed
 - conversationHistory: up to 10 recent messages (role/content) before the latest user message, for topic context
@@ -43,6 +43,7 @@ Rules:
 9) If unsure, do NOT auto-include CONTINUE_CURRENT. Prefer the most explicit user request.
 10) CONTINUE_CURRENT is allowed only when the latest message explicitly answers, clarifies, or references the current active task/question.
 11) If the latest message is only about another task/topic and has no explicit onboarding/active-task continuation signal, do not include CONTINUE_CURRENT.
+12) If availableTasks marks a task type as allowMultipleInstances=false, do not emit START_NEW for that type when an active/suspended task of that type already exists; prefer SWITCH_TO or RESUME_TASK.
 
 Execution priority and ordering:
 - Build intents in this order:
