@@ -189,6 +189,8 @@ public class CompiledWorkflowGraph<TState> where TState : WorkflowStateBase
 				state.InterruptRequestId = interruptEx.RequestId;
 				state.InterruptCaller = interruptEx.Caller;
 				state.InterruptReason = WorkflowInterruptReason.AskHuman;
+				await SafeNotifyInterceptorAsync(config, state, (i, c, s) => i.OnInterruptAsync(c, s));
+				await SafeNotifyInterceptorAsync(config, state, (i, c, s) => i.OnGraphCompletedAsync(c, s, WorkflowGraphCompletionReason.Interrupt));
 				// save checkpoint at the node that interrupted the workflow basically AskHuman node
 				await SaveCheckpointAsync(config, state, WorkflowEdges.AskHuman);
 
